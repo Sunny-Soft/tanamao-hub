@@ -28,8 +28,7 @@
       "target": [
         "nsis",
         "portable"
-      ],
-      "icon": "public/favicon.ico"
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -46,7 +45,9 @@
     "@angular/forms": "^21.2.0",
     "@angular/platform-browser": "^21.2.0",
     "@angular/router": "^21.2.0",
-    "electron": "^41.0.3",
+    "axios": "^1.13.6",
+    "dotenv": "^17.3.1",
+    "pg": "^8.20.0",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0"
   },
@@ -55,16 +56,16 @@
     "@angular/cli": "^21.2.0",
     "@angular/compiler-cli": "^21.2.0",
     "@tailwindcss/postcss": "^4.1.12",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^41.0.3",
+    "electron-builder": "^24.13.3",
     "jsdom": "^28.0.0",
     "postcss": "^8.5.3",
     "prettier": "^3.8.1",
     "tailwindcss": "^4.1.12",
     "typescript": "~5.9.2",
     "vitest": "^4.0.8",
-    "concurrently": "^9.2.1",
-    "cross-env": "^10.1.0",
-    "electron": "^40.6.0",
-    "wait-on": "^9.0.4",
-    "electron-builder": "^24.13.3"
+    "wait-on": "^9.0.4"
   }
 }

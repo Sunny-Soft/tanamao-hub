@@ -12,6 +12,8 @@ const __dirname = path.dirname(__filename);
 
 //tray
 let tray;
+let hubServer;
+let isQuitting = false;
 
 function createTray(win) {
     tray = new Tray(path.join(__dirname, '../public/favicon.ico'));
@@ -20,9 +22,10 @@ function createTray(win) {
         { label: 'Abrir', type: 'normal', click: () => win.show() },
         {
             label: 'Encerrar', type: 'normal', click: () => {
+                isQuitting = true;
                 BackupService.stop();
                 UpdateService.stop();
-                initHubServer().close();
+                if (hubServer) hubServer.close();
                 app.quit();
             }
         },
@@ -58,8 +61,10 @@ function createWindow() {
     // win.loadURL('http://localhost:4201');
 
     win.on('close', (e) => {
-        e.preventDefault();
-        win.hide();
+        if (!isQuitting) {
+            e.preventDefault();
+            win.hide();
+        }
     });
 }
 
@@ -67,7 +72,7 @@ app.whenReady().then(() => {
     initIPCApi();
     BackupService.start();
     UpdateService.start();
-    initHubServer();
+    hubServer = initHubServer();
     createWindow();
 });
 

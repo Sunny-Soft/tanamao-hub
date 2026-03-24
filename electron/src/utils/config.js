@@ -1,7 +1,11 @@
 import fs from 'fs'
 import path from 'path'
 import { app } from 'electron'
+import dotenv from 'dotenv'
 
+dotenv.config()
+
+export const gitToken = process.env.GIT_ACCESS_TOKEN || ''
 
 export function rootPath() {
     return app.isPackaged
