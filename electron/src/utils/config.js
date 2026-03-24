@@ -2,7 +2,6 @@ import fs from 'fs'
 import path from 'path'
 import { app } from 'electron'
 
-export const gitToken = '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'
 
 export function rootPath() {
     return app.isPackaged
