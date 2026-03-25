@@ -55,4 +55,9 @@ export interface ProgramHandler {
      * Salva a configuração do programa.
      */
     configSave(config: any): Promise<{ success: boolean; error?: string }>;
+
+    /**
+     * Desinstala o programa.
+     */
+    uninstall(): Promise<{ success: boolean; error?: string }>;
 }

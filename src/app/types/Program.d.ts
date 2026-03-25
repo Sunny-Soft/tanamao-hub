@@ -4,7 +4,7 @@ export interface Program {
     version: string;
     description: string;
     icon: string;
-    status: 'installed' | 'not-installed' | 'updating' | 'downloading' | 'installing' | 'setup' | 'error' | 'running' | 'stopped';
+    status: 'installed' | 'not-installed' | 'updating' | 'downloading' | 'installing' | 'setup' | 'error' | 'running' | 'stopped' | 'uninstalling';
     progress?: number;
     message?: string;
     hasUpdate: boolean;

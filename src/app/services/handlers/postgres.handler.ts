@@ -11,7 +11,7 @@ import { ProgramHandler } from '../../types/ProgramHandler';
  */
 @Injectable({ providedIn: 'root' })
 export class PostgresHandler implements ProgramHandler {
-    readonly programId = 'postgres';
+    readonly programId = 'postgresql';
 
     init(onProgress: (id: string, status: Program['status'], progress?: number, message?: string) => void): void {
         if (window.api?.onPostgresProgress) {
@@ -104,6 +104,15 @@ export class PostgresHandler implements ProgramHandler {
         }
     }
 
+    /** Para o serviço Windows do PostgreSQL */
+    async stop(): Promise<{ success: boolean; error?: string }> {
+        try {
+            return await window.api.postgresStop();
+        } catch (error: any) {
+            return { success: false, error: error.message };
+        }
+    }
+
     async config(): Promise<{ success: boolean; config?: any, error?: string }> {
         // no op
         return { success: true };
@@ -112,5 +121,14 @@ export class PostgresHandler implements ProgramHandler {
     async configSave(config: any): Promise<{ success: boolean; error?: string }> {
         // no op
         return { success: true };
+    }
+
+    async uninstall(): Promise<{ success: boolean; error?: string }> {
+        try {
+            return await window.api.postgresUninstall();
+        } catch (error: any) {
+            console.error('[PostgresHandler] Erro na chamada uninstall:', error);
+            return { success: false, error: error.message };
+        }
     }
 }

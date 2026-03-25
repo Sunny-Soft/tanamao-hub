@@ -13,6 +13,17 @@ export function rootPath() {
         : app.getAppPath();
 }
 
+/**
+ * Retorna um caminho que temos certeza de ter permissão de escrita.
+ * Em desenvolvimento: a raiz do projeto (rootPath).
+ * Em produção: a pasta de dados do usuário (%AppData%/tanamao-hub).
+ */
+export function getWritablePath() {
+    return app.isPackaged
+        ? app.getPath('userData')
+        : rootPath();
+}
+
 export function getConfigPath() {
     const configPath = app.isPackaged
         ? path.join(app.getPath('userData'), 'configs.json')
@@ -21,17 +32,17 @@ export function getConfigPath() {
     if (!fs.existsSync(configPath)) {
         fs.writeFileSync(configPath, JSON.stringify({
             host: 'localhost',
-            port: 5432,
+            port: 5433,
             user: 'postgres',
             password: 'admin',
-            database: 'tanamao',
-            tanamao_food_path: 'C:\\Program Files\\Tanamao Food',
+            database: 'dados',
+            tanamao_food_path: 'C:\\Sunny\\Tanamao Food',
             auto_start: true,
             auto_update: false,
             backup_enabled: false,
             backup_time: '03:00',
             backup_days: [1, 2, 3, 4, 5], // segunda a sexta
-            backup_path: path.join(rootPath(), 'backups')
+            backup_path: path.join(getWritablePath(), 'backups')
         }));
     }
 
@@ -39,7 +50,7 @@ export function getConfigPath() {
 }
 
 export function getMigrationsPath() {
-    return path.join(rootPath(), 'migrations');
+    return path.join(getWritablePath(), 'migrations');
 }
 
 export function getConfigs() {

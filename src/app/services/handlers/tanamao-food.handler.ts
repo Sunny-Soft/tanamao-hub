@@ -102,6 +102,17 @@ export class TanamaoFoodHandler implements ProgramHandler {
             const result = await window.api.tanamaoFoodUpdate(installPath);
             return result;
         } catch (error: any) {
+            console.error('[TanamaoFoodHandler] Erro na chamada update:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    async uninstall(): Promise<{ success: boolean; error?: string }> {
+        try {
+            const result = await window.api.tanamaoFoodUninstall();
+            return result;
+        } catch (error: any) {
+            console.error('[TanamaoFoodHandler] Erro na chamada uninstall:', error);
             return { success: false, error: error.message };
         }
     }

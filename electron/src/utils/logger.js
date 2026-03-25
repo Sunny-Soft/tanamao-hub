@@ -26,13 +26,21 @@ function formatMessage(level, message) {
 
 function writeLog(programId, level, message) {
     const logFile = getLogFile(programId);
+    const detailedLogFile = getLogFile('hub-detailed');
     const formattedMessage = formatMessage(level, message);
     
     // Também loga no console para desenvolvimento
     console.log(formattedMessage.trim());
 
     try {
+        // Log específico do programa
         fs.appendFileSync(logFile, formattedMessage);
+        
+        // Log detalhado geral (Hub)
+        if (programId !== 'hub-detailed') {
+            const hubMessage = `[${programId}] ${formattedMessage}`;
+            fs.appendFileSync(detailedLogFile, hubMessage);
+        }
     } catch (err) {
         console.error('Falha ao escrever no arquivo de log:', err);
     }
@@ -48,6 +56,21 @@ export function warn(programId, message) {
 
 export function error(programId, message) {
     writeLog(programId, 'error', message);
+}
+
+/**
+ * Loga uma mensagem detalhada (vinda de comandos shell, etc)
+ */
+export function logDetailed(programId, message) {
+    const detailedLogFile = getLogFile('hub-detailed');
+    const timestamp = new Date().toISOString();
+    const formatted = `[${timestamp}] [DETALHADO] [${programId}] ${message}\n`;
+    
+    try {
+        fs.appendFileSync(detailedLogFile, formatted);
+    } catch (err) {
+        // ignore
+    }
 }
 
 /**

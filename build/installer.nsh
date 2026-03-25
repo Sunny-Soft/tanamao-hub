@@ -8,7 +8,7 @@
     Goto done_default
 
   use_default:
-    StrCpy $INSTDIR "C:\Sunny\Pasta do programa\Tanamao Hub"
+    StrCpy $INSTDIR "C:\Sunny\Tanamao\Tanamao Hub"
 
   done_default:
     WriteRegExpandStr HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation "$INSTDIR"

@@ -9,7 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { getConfigs, gitToken, rootPath } from '../../utils/config.js';
+import { getConfigs, gitToken, rootPath, getWritablePath } from '../../utils/config.js';
 import { info, warn, error as logError, getLogFile } from '../../utils/logger.js';
 import { writeExternalConfig } from '../../utils/config.js';
 import { app } from 'electron';
@@ -104,16 +104,31 @@ class TanamaoFoodController {
     getInstallPath() {
         const configs = getConfigs();
         if (configs && configs.tanamao_food_path) {
-            return path.join(configs.tanamao_food_path, 'Tanamao Food.exe');
+            // Se o caminho na config for apenas o diretório, adicionamos o executável
+            if (!configs.tanamao_food_path.toLowerCase().endsWith('.exe')) {
+                return path.join(configs.tanamao_food_path, 'Tanamao Food.exe');
+            }
+            return configs.tanamao_food_path;
         }
-        return path.join('C:', 'Program Files', 'Tanamao Food', 'Tanamao Food.exe');
+        return path.join('C:', 'Sunny', 'Tanamao', 'Tanamao Food', 'Tanamao Food.exe');
     }
 
     /**
-     * Verifica se o executável do Tanamao Food existe.
+     * Verifica se o executável do Tanamao Food existe e se a instalação parece válida.
      */
     isFoodInstalled() {
-        return fs.existsSync(this.getInstallPath());
+        const exePath = this.getInstallPath();
+        const exists = fs.existsSync(exePath);
+        if (!exists) return false;
+
+        // Adicional: verifica se o diretório de recursos existe, o que indica uma instalação completa
+        // try {
+        //     const version = this.getFoodVersion();
+        //     return version !== '0.0.0';
+        // } catch (e) {
+        //     return false;
+        // }
+        return true;
     }
 
     /**
@@ -136,9 +151,20 @@ class TanamaoFoodController {
     getFoodVersion() {
         try {
             const installPath = this.getInstallPath();
-            const packageJsonPath = path.join(path.dirname(installPath), 'resources', 'app', 'package.json');
+            const resourceDir = path.join(path.dirname(installPath), 'resources');
+
+            // Primeiro tenta em resources/app/package.json (descompactado)
+            const packageJsonPath = path.join(resourceDir, 'app', 'package.json');
             if (fs.existsSync(packageJsonPath)) {
                 const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+                return pkg.version;
+            }
+
+            // Depois tenta em resources/app.asar/package.json (compactado)
+            // No Electron, o fs pode ler dentro de asar se o path for correto
+            const asarPackagePath = path.join(resourceDir, 'app.asar', 'package.json');
+            if (fs.existsSync(asarPackagePath)) {
+                const pkg = JSON.parse(fs.readFileSync(asarPackagePath, 'utf-8'));
                 return pkg.version;
             }
         } catch (e) {
@@ -190,7 +216,7 @@ class TanamaoFoodController {
         try {
             info(PROGRAM_ID, 'Iniciando processo de instalação do Tanamao Food...');
             // 1. Verifica e instala dependência (PostgreSQL) se necessário
-            const postgresInstalled = PostgresController.checkDefaultDirectory();
+            const postgresInstalled = PostgresController.isInstalled();
             if (!postgresInstalled) {
                 info(PROGRAM_ID, 'PostgreSQL não encontrado. Instalando dependência...');
                 if (progressCallback) progressCallback({ status: 'info', message: 'Instalando PostgreSQL (dependência)...' });
@@ -204,6 +230,8 @@ class TanamaoFoodController {
                         });
                     }
                 });
+            } else {
+                info(PROGRAM_ID, 'PostgreSQL já instalado.');
             }
 
             // 1.1 Verifica e instala dependência (PostGIS) se necessário
@@ -223,6 +251,9 @@ class TanamaoFoodController {
                 });
             }
 
+            // Rodar portable postgres
+            await PostgresController.startPortable();
+
             // 2. Buscar informações do release mais recente
             if (progressCallback) progressCallback({ status: 'checking', message: 'Buscando versão mais recente...' });
             let assets;
@@ -240,9 +271,10 @@ class TanamaoFoodController {
 
             if (!assets.setup) throw new Error("Instalador .exe não encontrado no release.");
 
+
             // 3. Baixar migrations se existirem
             if (assets.migrations) {
-                const migrationsZipPath = path.join(rootPath(), assets.migrations.name);
+                const migrationsZipPath = path.join(getWritablePath(), assets.migrations.name);
                 if (progressCallback) progressCallback({ status: 'downloading', message: 'Baixando novas migrations...' });
                 await this.downloadInstaller(assets.migrations.url, gitToken, migrationsZipPath);
 
@@ -252,7 +284,7 @@ class TanamaoFoodController {
             }
 
             // 4. Baixar o instalador para uma pasta temporária
-            const tempInstallerPath = path.join(rootPath(), assets.setup.name);
+            const tempInstallerPath = path.join(getWritablePath(), assets.setup.name);
             if (progressCallback) progressCallback({ status: 'downloading', message: `Baixando ${assets.version}...` });
 
             await this.downloadInstaller(assets.setup.url, gitToken, tempInstallerPath, (progress) => {
@@ -278,7 +310,9 @@ class TanamaoFoodController {
             info(PROGRAM_ID, `Iniciando instalador: "${tempInstallerPath}" ${args.join(' ')}`);
 
             return new Promise((resolve, reject) => {
-                const proc = spawn(`"${tempInstallerPath}"`, args, {
+                // Use shell: true para permitir que o Windows solicite elevação (UAC) se necessário.
+                // windowsVerbatimArguments: true nos dá controle total sobre a citação dos argumentos no shell.
+                const proc = spawn(`"${tempInstallerPath}"`, args.map(a => a.includes(' ') ? `"${a}"` : a), {
                     shell: true,
                     windowsVerbatimArguments: true
                 });
@@ -286,11 +320,18 @@ class TanamaoFoodController {
                 proc.on('close', async (code) => {
                     if (code === 0) {
                         if (progressCallback) progressCallback({ status: 'completed', percentage: 100 });
-                        info(PROGRAM_ID, 'Instalação do executável concluída com sucesso. Verificando instalação...');
+                        // Importação dinâmica para salvar configs se necessário
+                        const { saveConfigs } = await import('../../utils/config.js');
+
+                        // Se instalou num diretório específico, atualizamos a config
+                        if (installDir) {
+                            info(PROGRAM_ID, `Atualizando tanamao_food_path para: ${installDir}`);
+                            saveConfigs({ tanamao_food_path: installDir });
+                        }
 
                         // Verifica se o executável foi realmente criado
                         if (!this.isFoodInstalled()) {
-                            const errorMsg = 'O executável do Tanamao Food não foi encontrado após a instalação. O setup do banco será ignorado.';
+                            const errorMsg = `O executável do Tanamao Food não foi encontrado em "${this.getInstallPath()}". O setup do banco será ignorado.`;
                             logError(PROGRAM_ID, errorMsg);
                             if (progressCallback) progressCallback({ status: 'error', error: errorMsg });
                             return resolve({ success: false, error: errorMsg });
@@ -331,7 +372,6 @@ class TanamaoFoodController {
                             info(PROGRAM_ID, 'Configuração do banco de dados concluída.');
                         } catch (dbError) {
                             logError(PROGRAM_ID, `Erro ao configurar banco de dados: ${dbError.message}`);
-                            // Mesmo com erro no banco, o executável foi instalado, mas avisamos o erro
                         }
 
                         resolve({ success: true });
@@ -412,8 +452,8 @@ class TanamaoFoodController {
      * Extrai o arquivo migrations.zip para a pasta de migrations do hub.
      */
     async extractMigrations(zipPath) {
-        const { rootPath } = await import('../../utils/config.js');
-        const migrationsDir = rootPath();
+        const { getMigrationsPath } = await import('../../utils/config.js');
+        const migrationsDir = getMigrationsPath();
 
         if (!fs.existsSync(migrationsDir)) {
             fs.mkdirSync(migrationsDir, { recursive: true });
@@ -422,6 +462,77 @@ class TanamaoFoodController {
         info(PROGRAM_ID, `Extraindo migrations para ${migrationsDir}...`);
         const extractCmd = `powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${migrationsDir}' -Force"`;
         execSync(extractCmd);
+    }
+
+    /**
+     * Desinstala o Tanamao Food.
+     * Busca o desinstalador na pasta do programa e o executa.
+     */
+    async uninstallFood(progressCallback) {
+        try {
+            info(PROGRAM_ID, 'Iniciando processo de desinstalação do Tanamao Food...');
+
+            // 1. Verifica se está rodando e encerra
+            if (this.isFoodRunning()) {
+                info(PROGRAM_ID, 'O app está rodando. Encerrando para desinstalar...');
+                const exeName = path.basename(this.getInstallPath());
+                try {
+                    execSync(`taskkill /F /IM "${exeName}"`);
+                } catch (e) {
+                    warn(PROGRAM_ID, `Falha ao encerrar app: ${e.message}`);
+                }
+            }
+
+            // 2. Localiza o desinstalador
+            const installPath = path.dirname(this.getInstallPath());
+            if (!fs.existsSync(installPath)) {
+                return { success: true, message: 'Pasta de instalação não encontrada. Já desinstalado?' };
+            }
+
+            const files = fs.readdirSync(installPath);
+            const uninstaller = files.find(f => f.toLowerCase().startsWith('uninstall') && f.toLowerCase().endsWith('.exe'));
+
+            if (!uninstaller) {
+                warn(PROGRAM_ID, 'Desinstalador não encontrado na pasta. Deletando pasta manualmente...');
+                // Fallback: Deleta a pasta
+                fs.rmSync(installPath, { recursive: true, force: true });
+                return { success: true };
+            }
+
+            const uninstallerPath = path.join(installPath, uninstaller);
+            info(PROGRAM_ID, `Executando desinstalador: ${uninstallerPath}`);
+
+            if (progressCallback) progressCallback({ status: 'uninstalling', percentage: 50, message: 'Executando desinstalador...' });
+
+            return new Promise((resolve, reject) => {
+                // /S para silent mode
+                const proc = spawn(`"${uninstallerPath}"`, ['/S'], {
+                    shell: true,
+                    windowsVerbatimArguments: true
+                });
+
+                proc.on('close', (code) => {
+                    if (code === 0 || code === null) {
+                        info(PROGRAM_ID, 'Desinstalação concluída.');
+                        if (progressCallback) progressCallback({ status: 'completed', percentage: 100 });
+                        resolve({ success: true });
+                    } else {
+                        const msg = `Erro na desinstalação. Código: ${code}`;
+                        logError(PROGRAM_ID, msg);
+                        reject(new Error(msg));
+                    }
+                });
+
+                proc.on('error', (err) => {
+                    logError(PROGRAM_ID, `Erro ao iniciar desinstalador: ${err.message}`);
+                    reject(err);
+                });
+            });
+
+        } catch (e) {
+            logError(PROGRAM_ID, `Erro no processo de desinstalação: ${e.message}`);
+            return { success: false, error: e.message };
+        }
     }
 }
 

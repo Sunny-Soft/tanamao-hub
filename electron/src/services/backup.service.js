@@ -1,4 +1,4 @@
-import { getConfigs, rootPath } from '../utils/config.js';
+import { getConfigs, getWritablePath } from '../utils/config.js';
 import PostgresController from '../programs/postgresql/controller.js';
 import { info, warn, error } from '../utils/logger.js';
 import fs from 'fs';
@@ -62,7 +62,7 @@ class BackupService {
 
     async performBackup(configs, dateStr) {
         try {
-            const backupsDir = configs.backup_path || path.join(rootPath(), 'backups');
+            const backupsDir = configs.backup_path || path.join(getWritablePath(), 'backups');
             if (!fs.existsSync(backupsDir)) {
                 fs.mkdirSync(backupsDir, { recursive: true });
             }

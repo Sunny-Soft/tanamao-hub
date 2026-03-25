@@ -9,10 +9,12 @@
                     class="px-2 py-1 bg-orange-100 text-orange-600 text-[10px] font-bold uppercase rounded-full border border-orange-200">
                     Atualização disponível
                 </span>
+                @if(p.status === 'installed'){
                 <button (click)="config(p)"
                     class="p-2 rounded-lg text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-colors">
                     <span class="material-icons-outlined text-xl">settings</span>
                 </button>
+                }
             </div>
         </div>
 
@@ -29,7 +31,8 @@
             </div>
         </div>
 
-        <div class="mt-2 p-2 bg-red-50 border border-red-100 rounded-lg text-[10px] text-red-600" *ngIf="p.status === 'not-installed' && p.message">
+        <div class="mt-2 p-2 bg-red-50 border border-red-100 rounded-lg text-[10px] text-red-600"
+            *ngIf="p.status === 'not-installed' && p.message">
             <div class="flex items-center gap-1 font-bold mb-0.5">
                 <span class="material-icons-outlined text-xs">error_outline</span>
                 Erro na Instalação
@@ -49,13 +52,19 @@
                     <span class="material-icons-outlined text-sm">upgrade</span>
                     Atualizar
                 </button>
-                <button *ngIf="!p.hasUpdate && p.status === 'installed'" (click)="open(p)" class="btn-secondary text-sm !py-2">
+                <button *ngIf="!p.hasUpdate && p.status === 'installed'" (click)="open(p)"
+                    class="btn-secondary text-sm !py-2">
                     Abrir
+                </button>
+                <button *ngIf="p.status === 'installed'" (click)="uninstall(p)"
+                    class="btn-secondary !bg-red-50 !text-red-500 !border-red-100 hover:!bg-red-100 text-sm !py-2">
+                    <span class="material-icons-outlined text-sm">delete</span>
                 </button>
                 <button *ngIf="p.status === 'not-installed'" (click)="install(p)" class="btn-primary text-sm !py-2">
                     Instalar
                 </button>
-                <div *ngIf="p.status !== 'installed' && p.status !== 'not-installed'" class="text-xs text-slate-400 italic py-2">
+                <div *ngIf="p.status !== 'installed' && p.status !== 'not-installed'"
+                    class="text-xs text-slate-400 italic py-2">
                     Aguarde...
                 </div>
             </div>

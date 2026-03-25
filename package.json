@@ -29,9 +29,14 @@
         "nsis",
         "portable"
       ]
+
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": true,
+      "include": "build/installer.nsh",
+      "deleteAppDataOnUninstall": false,
+      "uninstallDisplayName": "Tanamao Food",
       "allowToChangeInstallationDirectory": true
     },
     "asar": true

@@ -7,11 +7,11 @@ const { Pool } = pkg
 const configs = getConfigs()
 
 const pool = new Pool({
-    host: configs.DB_HOST,
-    port: configs.DB_PORT,
-    user: configs.DB_USER,
-    password: configs.DB_PASSWORD,
-    database: configs.DB_NAME
+    host: configs.host || 'localhost',
+    port: configs.port || 5432,
+    user: configs.user || 'postgres',
+    password: configs.password || 'admin',
+    database: configs.database || 'dados'
 })
 
 export default pool

@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { DataService } from '../../services/data.service';
 import { Program } from '../../types/Program';
 import { ModalService } from '../../services/modal.service';
-import { Observable } from 'rxjs';
+import { map, Observable } from 'rxjs';
 
 @Component({
     selector: 'app-home',
@@ -20,7 +20,9 @@ export class HomeComponent {
         private dataService: DataService,
         private modalService: ModalService
     ) {
-        this.programs$ = this.dataService.getPrograms();
+        this.programs$ = this.dataService.getPrograms().pipe(
+            map((programs: Program[]) => programs.filter((p: Program) => p.type === 'app'))
+        );
     }
 
     search(event: any) {
@@ -51,5 +53,9 @@ export class HomeComponent {
 
     async config(program: Program) {
         this.modalService.setShowConfigModal(true, program);
+    }
+
+    uninstall(program: Program) {
+        this.dataService.uninstallProgram(program.id);
     }
 }

@@ -7,8 +7,8 @@
 import pkg from 'pg';
 import fs from 'fs';
 import path from 'path';
-import { rootPath, getMigrationsPath } from '../../utils/config.js';
-import { info, warn, error as logError } from '../../utils/logger.js';
+import { getConfigs, rootPath, getMigrationsPath, getWritablePath } from '../../utils/config.js';
+import { info, warn, error as logError, logDetailed } from '../../utils/logger.js';
 import PostgresController from './controller.js';
 
 const { Pool } = pkg;
@@ -30,12 +30,15 @@ export async function setupDatabase(dbName = 'dados', user = 'postgres', passwor
     info(PROGRAM_ID, `Configurando banco: ${dbName}...`);
     if (callback) callback({ status: 'initializing', percentage: 0 });
 
+    const configs = getConfigs();
+    const port = configs.port || 5432;
+
     const adminPool = new Pool({
         user,
         host: 'localhost',
         database: 'postgres', // conecta no banco padrão primeiro
         password,
-        port: 5432,
+        port,
     });
 
     info(PROGRAM_ID, `Conexão: user=${user}, password=${password}`);
@@ -59,7 +62,7 @@ export async function setupDatabase(dbName = 'dados', user = 'postgres', passwor
         // 2. Se o banco já existe, fazemos um backup de segurança antes das migrations
         let backupPath = null;
         if (dbExists) {
-            const backupsDir = path.join(rootPath(), 'backups');
+            const backupsDir = path.join(getWritablePath(), 'backups');
             if (!fs.existsSync(backupsDir)) {
                 fs.mkdirSync(backupsDir, { recursive: true });
             }
@@ -68,12 +71,13 @@ export async function setupDatabase(dbName = 'dados', user = 'postgres', passwor
         }
 
         // 3. Reconecta no banco alvo para operações
+        const port = getConfigs().port || 5432;
         const dbPool = new Pool({
             user,
             host: 'localhost',
             database: dbName,
             password,
-            port: 5432,
+            port,
         });
 
         info(PROGRAM_ID, `Conexão: user=${user}, password=${password}`);
@@ -209,9 +213,13 @@ export async function runMigrations(pool, dbName, migrationFiles, callback) {
 
             info(PROGRAM_ID, `Executando migration: ${fileName}`);
             const sql = fs.readFileSync(filePath, 'utf8');
+            
+            // Log do conteúdo SQL se for pequeno ou apenas o início
+            logDetailed(PROGRAM_ID, `SQL [${fileName}]: ${sql.substring(0, 200)}${sql.length > 200 ? '...' : ''}`);
+            
             await pool.query(sql);
             await pool.query(`INSERT INTO migrations_history (filename) VALUES ($1)`, [fileName]);
-            info(PROGRAM_ID, `Migration concluída: ${fileName}`);
+            info(PROGRAM_ID, `Migration concluída com sucesso: ${fileName}`);
 
             if (callback) {
                 const percentage = 20 + ((i + 1) / filesToRun.length * 80);
@@ -228,16 +236,20 @@ export async function runMigrations(pool, dbName, migrationFiles, callback) {
 /**
  * Testa a conexão com o banco de dados.
  */
-export async function testDatabaseConnection(dbName, user, password, host = 'localhost', port = 5432) {
+export async function testDatabaseConnection(dbName, user, password, host = 'localhost', port) {
+    if (!port) {
+        const configs = getConfigs();
+        port = configs.port || 5432;
+    }
     info(PROGRAM_ID, `Testando conexão: host=${host}, port=${port}, user=${user}, database=${dbName}`);
-    
+
     const pool = new Pool({
         user,
         host,
         database: dbName,
         password,
         port,
-        connectionTimeoutMillis: 5000, 
+        connectionTimeoutMillis: 5000,
     });
 
     try {

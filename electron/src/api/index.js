@@ -27,7 +27,7 @@ import { log } from 'console';
  * Ao adicionar um novo programa com status dinâmico, adicione uma entry aqui.
  */
 const statusResolvers = {
-    'postgres': () => {
+    'postgresql': () => {
         const version = PostgresController.getPostgresVersion();
         const isRunning = PostgresController.isPostgresRunning();
         return {
@@ -73,8 +73,6 @@ export default function initIPCApi() {
                     ...dynamicStatus,
                 };
             })
-            // Filtra programas do tipo 'service' (como postgres) para não exibir na UI principal
-            .filter(p => p.type === 'app');
     });
 
     ipcMain.handle('program:config:get', async (event, programId) => {

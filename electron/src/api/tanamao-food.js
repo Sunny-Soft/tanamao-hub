@@ -120,4 +120,17 @@ export function initTanamaoFoodApi() {
             return { success: false, error: error.message };
         }
     });
+
+    ipcMain.handle('tanamao-food:uninstall', async (event) => {
+        try {
+            info('tanamao-food-api', 'Iniciando IPC: tanamao-food:uninstall');
+            const result = await TanamaoFoodController.uninstallFood((progress) => {
+                event.sender.send('tanamao-food:progress', progress);
+            });
+            return result;
+        } catch (err) {
+            error('tanamao-food-api', `Erro fatal no IPC tanamao-food:uninstall: ${err.message}`);
+            return { success: false, error: err.message };
+        }
+    });
 }

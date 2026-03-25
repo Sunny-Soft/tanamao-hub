@@ -52,3 +52,5 @@ Thumbs.db
 configs.json
 .env
 *.exe
+/installers
+*.zip

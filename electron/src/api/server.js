@@ -1,7 +1,7 @@
 import http from 'http';
 import { info, error } from '../utils/logger.js';
 
-const PORT = 3900; // Porta padrão para o Hub Server
+const PORT = 3001; // Porta padrão para o Hub Server
 const PROGRAM_ID = 'hub-server';
 
 export function initHubServer() {
@@ -16,7 +16,7 @@ export function initHubServer() {
             return;
         }
 
-        if (req.url === '/health' && req.method === 'GET') {
+        if (req.url === '/status' && req.method === 'GET') {
             res.statusCode = 200;
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify({ status: 'ok', version: '1.0.0' }));

@@ -17,6 +17,17 @@ export function initPostgresApi() {
         }
     });
 
+    ipcMain.handle('postgres:uninstall', async (event) => {
+        try {
+            await PostgresController.uninstallPostgres((progress) => {
+                event.sender.send('postgres:progress', progress);
+            });
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
     ipcMain.handle('postgres:running', async () => {
         try {
             const isRunning = PostgresController.isPostgresRunning();
@@ -38,6 +49,15 @@ export function initPostgresApi() {
     ipcMain.handle('postgres:start', async () => {
         try {
             const result = await PostgresController.startPostgres();
+            return result;
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('postgres:stop', async () => {
+        try {
+            const result = await PostgresController.stopPostgres();
             return result;
         } catch (error) {
             return { success: false, error: error.message };

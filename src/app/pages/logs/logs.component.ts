@@ -1,4 +1,4 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 
@@ -15,7 +15,7 @@ interface LogProgram {
     templateUrl: './logs.component.html',
     styleUrl: './logs.component.css',
 })
-export class LogsComponent implements OnInit {
+export class LogsComponent implements OnInit, OnDestroy {
     programs = signal<LogProgram[]>([]);
     selectedProgramId = signal<string>('');
     logContent = signal<string>('');
@@ -24,6 +24,19 @@ export class LogsComponent implements OnInit {
 
     async ngOnInit() {
         await this.loadPrograms();
+
+        // Configura o listener para atualizações em tempo real
+        window.api.onLogsUpdate((data: any) => {
+            if (data.programId === this.selectedProgramId()) {
+                this.logContent.set(data.content);
+                // Scroll to bottom after content loads
+                setTimeout(() => this.scrollToBottom(), 50);
+            }
+        });
+    }
+
+    ngOnDestroy() {
+        window.api.logsUnwatch();
     }
 
     async loadPrograms() {
@@ -55,6 +68,8 @@ export class LogsComponent implements OnInit {
 
             if (result.success) {
                 this.logContent.set(result.content || '(nenhum log registrado ainda)');
+                // Inicia o monitoramento em tempo real para este programa
+                window.api.logsWatch(this.selectedProgramId());
             } else {
                 this.error.set(result.content || 'Erro ao ler logs.');
                 this.logContent.set('');

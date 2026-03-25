@@ -41,7 +41,7 @@ export class DataService {
    * Atualiza o status de cada programa consultando seu handler.
    * Nenhum conhecimento específico de programa aqui.
    */
-  private async checkStatuses() {
+  async checkStatuses() {
     for (const handler of this.registry.handlers) {
       const dynamicStatus = await handler.checkStatus();
       this.allPrograms = this.allPrograms.map(p =>
@@ -175,7 +175,7 @@ export class DataService {
     if (!program.isRunning) {
       // Por enquanto apenas o postgres tem start() — outros serviços futuros podem
       // implementar uma interface ServiceHandler que estenda ProgramHandler com start().
-      if (id === 'postgres') {
+      if (id === 'postgresql') {
         const result = await this.postgresHandler.start();
         if (result.success) {
           this.allPrograms = this.allPrograms.map(p =>
@@ -187,10 +187,22 @@ export class DataService {
         }
       }
     } else {
-      this.allPrograms = this.allPrograms.map(p =>
-        p.id === id ? { ...p, isRunning: !p.isRunning } : p
-      );
-      this.programsSubject.next(this.allPrograms);
+      if (id === 'postgresql') {
+        const result = await this.postgresHandler.stop();
+        if (result.success) {
+          this.allPrograms = this.allPrograms.map(p =>
+            p.id === id ? { ...p, isRunning: false } : p
+          );
+          this.programsSubject.next(this.allPrograms);
+        } else {
+          console.error('[DataService] Falha ao parar serviço:', result.error);
+        }
+      } else {
+        this.allPrograms = this.allPrograms.map(p =>
+          p.id === id ? { ...p, isRunning: !p.isRunning } : p
+        );
+        this.programsSubject.next(this.allPrograms);
+      }
     }
   }
 
@@ -217,6 +229,33 @@ export class DataService {
     }
   }
 
+  async uninstallProgram(id: string) {
+    const handler = this.registry.getHandler(id);
+    if (!handler) {
+      console.warn(`[DataService] Nenhum handler para desinstalar programa: ${id}`);
+      return;
+    }
+
+    if (!confirm(`Tem certeza que deseja desinstalar ${id}? Isso removerá os arquivos do programa e o banco de dados associado.`)) {
+      return;
+    }
+
+    this.updateProgramStatus(id, 'uninstalling', 0, 'Desinstalando...');
+    try {
+      const result = await handler.uninstall();
+      if (result.success) {
+        this.updateProgramStatus(id, 'not-installed');
+        await this.checkStatuses();
+      } else {
+        console.error(`[DataService] Desinstalação de ${id} falhou:`, result.error);
+        this.updateProgramStatus(id, 'installed', undefined, result.error);
+      }
+    } catch (error) {
+      console.error(`[DataService] Erro na desinstalação de ${id}:`, error);
+      this.updateProgramStatus(id, 'installed');
+    }
+  }
+
   // ─── Estado ───────────────────────────────────────────────────────────────
 
   updateProgramStatus(id: string, status: Program['status'], progress?: number, message?: string) {
@@ -237,21 +276,21 @@ export class DataService {
     return await handler.config();
   }
 
-    async saveProgramConfig(id: string, config: any) {
-        const handler = this.registry.getHandler(id);
-        if (!handler) {
-            console.warn(`[DataService] Nenhum handler para salvar config do programa: ${id}`);
-            return;
-        }
-        return await handler.configSave(config);
+  async saveProgramConfig(id: string, config: any) {
+    const handler = this.registry.getHandler(id);
+    if (!handler) {
+      console.warn(`[DataService] Nenhum handler para salvar config do programa: ${id}`);
+      return;
     }
+    return await handler.configSave(config);
+  }
 
-    async testConnection(id: string, config: any) {
-        const handler = this.registry.getHandler(id) as any;
-        if (handler && handler.testConnection) {
-            return await handler.testConnection(config);
-        }
-        console.warn(`[DataService] Handler para ${id} não suporta teste de conexão.`);
-        return { success: false, error: 'Funcionalidade não suportada para este programa.' };
+  async testConnection(id: string, config: any) {
+    const handler = this.registry.getHandler(id) as any;
+    if (handler && handler.testConnection) {
+      return await handler.testConnection(config);
     }
+    console.warn(`[DataService] Handler para ${id} não suporta teste de conexão.`);
+    return { success: false, error: 'Funcionalidade não suportada para este programa.' };
+  }
 }

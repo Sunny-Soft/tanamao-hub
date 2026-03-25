@@ -4,7 +4,7 @@ import { initTanamaoFoodApi } from '../api/tanamao-food.js';
 export const programRegistry = [
     {
         program: {
-            id: 'postgres',
+            id: 'postgresql',
             name: 'PostgreSQL',
             icon: 'storage',
             type: 'service',
