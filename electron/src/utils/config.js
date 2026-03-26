@@ -40,7 +40,7 @@ export function getConfigPath() {
             user: 'postgres',
             password: 'admin',
             database: 'dados',
-            tanamao_food_path: 'C:\\Sunny\\Tanamao_Food',
+            tanamao_food_path: 'C:\\Sunny\\TanamaoFood',
             auto_start: true,
             auto_update: false,
             backup_enabled: false,
