@@ -67,6 +67,7 @@ import axios from 'axios';
 import AdmZip from 'adm-zip';
 import { setupDatabase } from '../postgresql/db-setup.js';
 import ProgramManager from '../program-manager.js';
+import { notify } from '../../utils/notify.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROGRAM_ID = 'tanamao-food';
@@ -75,25 +76,7 @@ const PROGRAM_ID = 'tanamao-food';
 // Helpers internos
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Busca o ID do pacote mais recente disponível no servidor.
- *
- * @returns {Promise<number>} ID numérico da versão mais recente. Ex: 331
- */
-async function getLatestPackageId() {
-    const url = `${PACKAGES_API}/latest?id=${PACKAGE_ID}`;
-    info(PROGRAM_ID, `Buscando versão mais recente em: ${url}`);
 
-    const response = await axios.get(url, { responseType: 'text' });
-    const id = parseInt(response.data.trim(), 10);
-
-    if (isNaN(id)) {
-        throw new Error(`Resposta inesperada ao buscar versão: "${response.data}"`);
-    }
-
-    info(PROGRAM_ID, `Versão mais recente disponível: ID ${id}`);
-    return id;
-}
 
 /**
  * Baixa o pacote ZIP do servidor, com reporte de progresso.
@@ -150,13 +133,15 @@ async function downloadPackage(fromId, toId, destZipPath, onProgress) {
  *       *.sql            → copiados para getMigrationsPath()
  *
  * @param {string} zipPath - Caminho para o arquivo ZIP baixado.
+ * @param {Function} [onProgress] - Callback: ({ percentage: number, message: string })
  * @returns {{ exePath: string, sqlFiles: string[] }} Caminhos dos arquivos extraídos.
  */
-function extractPackage(zipPath) {
+function extractPackage(zipPath, onProgress) {
     info(PROGRAM_ID, `Extraindo pacote: ${zipPath}`);
 
     const zip = new AdmZip(zipPath);
     const entries = zip.getEntries();
+    const totalEntries = entries.length;
 
     const writableDir = getWritablePath();
     const migrationsDir = getMigrationsPath();
@@ -167,10 +152,19 @@ function extractPackage(zipPath) {
 
     let exePath = null;
     const sqlFiles = [];
+    let extractedCount = 0;
 
     for (const entry of entries) {
+        extractedCount++;
         const entryName = entry.entryName.replace(/\\/g, '/'); // normaliza separadores
         const fileName = path.basename(entryName);
+
+        if (onProgress) {
+            onProgress({
+                percentage: Math.round((extractedCount / totalEntries) * 100),
+                message: `Extraindo ${fileName}...`
+            });
+        }
 
         // Ignora entradas de diretório
         if (entry.isDirectory) continue;
@@ -207,8 +201,32 @@ function extractPackage(zipPath) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class TanamaoFoodController {
+    constructor() {
+        this.isBusy = false;
+        this.currentBusyStatus = null;
+    }
 
     // ── Detecção ──────────────────────────────────────────────────────────────
+
+    /**
+     * Busca o ID do pacote mais recente disponível no servidor.
+     *
+     * @returns {Promise<number>} ID numérico da versão mais recente. Ex: 331
+     */
+    async getLatestPackageId() {
+        const url = `${PACKAGES_API}/latest?id=${PACKAGE_ID}`;
+        info(PROGRAM_ID, `Buscando versão mais recente em: ${url}`);
+
+        const response = await axios.get(url, { responseType: 'text' });
+        const id = parseInt(response.data.trim(), 10);
+
+        if (isNaN(id)) {
+            throw new Error(`Resposta inesperada ao buscar versão: "${response.data}"`);
+        }
+
+        info(PROGRAM_ID, `Versão mais recente disponível: ID ${id}`);
+        return id;
+    }
 
     /**
      * Retorna o caminho do executável do Tanamao Food.
@@ -222,7 +240,7 @@ class TanamaoFoodController {
             }
             return configs.tanamao_food_path;
         }
-        return path.join('C:', 'Sunny', 'Tanamao', 'Tanamao Food', 'Tanamao Food.exe');
+        return path.join('C:', 'Sunny', 'TanamaoFood', 'Tanamao Food.exe');
     }
 
     /**
@@ -247,7 +265,7 @@ class TanamaoFoodController {
     isFoodRunning() {
         try {
             const exeName = path.basename(this.getInstallPath());
-            const stdout = execSync(`tasklist /FI "IMAGENAME eq ${exeName}" /NH`).toString();
+            const stdout = execSync(`tasklist /FI "IMAGENAME eq ${exeName}" /NH`, { encoding: 'utf8' });
             return stdout.toLowerCase().includes(exeName.toLowerCase());
         } catch (e) {
             logError(PROGRAM_ID, `Erro ao verificar processo: ${e.message}`);
@@ -256,12 +274,50 @@ class TanamaoFoodController {
     }
 
     /**
+     * Tenta encerrar o processo do Tanamao Food de forma robusta.
+     * @returns {Promise<boolean>} True se o processo foi encerrado ou não estava rodando.
+     */
+    async terminateFoodProcess() {
+        if (!this.isFoodRunning()) return true;
+
+        const exeName = path.basename(this.getInstallPath());
+        info(PROGRAM_ID, `Solicitando encerramento do processo (e sua árvore): ${exeName}`);
+
+        try {
+            // /F = Forçar, /IM = ImageName, /T = Tree (mata processos filhos)
+            execSync(`taskkill /F /IM "${exeName}" /T`, { stdio: 'ignore' });
+        } catch (e) {
+            // Pode falhar se o processo já tiver fechado
+        }
+
+        // Aguarda até o processo sumir da lista (timeout de 5 segundos)
+        for (let i = 0; i < 10; i++) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            if (!this.isFoodRunning()) {
+                info(PROGRAM_ID, `Processo ${exeName} encerrado.`);
+                // Pequena pausa extra para o Windows liberar os handles de arquivo no FS
+                await new Promise(resolve => setTimeout(resolve, 800));
+                return true;
+            }
+        }
+
+        warn(PROGRAM_ID, `Tempo esgotado ao aguardar encerramento de ${exeName}.`);
+        return false;
+    }
+
+    /**
      * Lê a versão do Tanamao Food a partir do package.json do app instalado.
      * Suporta apps descompactados (resources/app) e compactados (resources/app.asar).
      */
     getFoodVersion() {
+        // Se estiver ocupado instalando/atualizando, não tenta ler arquivos para evitar locks
+        if (this.isBusy) return '...';
+
         try {
-            const resourceDir = path.join(path.dirname(this.getInstallPath()), 'resources');
+            const installPath = this.getInstallPath();
+            if (!fs.existsSync(installPath)) return '0.0.0';
+
+            const resourceDir = path.join(path.dirname(installPath), 'resources');
 
             const candidatos = [
                 path.join(resourceDir, 'app', 'package.json'),
@@ -295,6 +351,14 @@ class TanamaoFoodController {
     }
 
     getStatus() {
+        if (this.isBusy) {
+            return {
+                status: this.currentBusyStatus || 'busy',
+                isRunning: false,
+                version: '...',
+            };
+        }
+
         return {
             status: this.isInstalled() ? 'installed' : 'not-installed',
             isRunning: this.isRunning(),
@@ -375,6 +439,13 @@ class TanamaoFoodController {
      * @param {string|null} [installDir]    - Diretório de instalação personalizado (opcional)
      */
     async installFood(progressCallback, installDir = null) {
+        if (this.isBusy) {
+            throw new Error('Uma operação já está em andamento para o Tanamao Food.');
+        }
+
+        this.isBusy = true;
+        this.currentBusyStatus = 'installing';
+
         let currentStep = 0;
         let totalSteps = 1;
 
@@ -389,6 +460,7 @@ class TanamaoFoodController {
 
         try {
             info(PROGRAM_ID, '──── Iniciando instalação do Tanamao Food ────');
+            notify('Tanamao Hub', 'Iniciando instalação do Tanamao Food...');
 
             // ── Cálculo de Passos ───────────────────────────────────────────
             const steps = [];
@@ -408,7 +480,7 @@ class TanamaoFoodController {
                 info(PROGRAM_ID, 'PostgreSQL não encontrado. Instalando dependência...');
                 updateProgress({ status: 'info', message: 'Instalando PostgreSQL (dependência)...' });
                 await postgresController.install((p) =>
-                    updateProgress({ ...p, app: 'postgresql', message: `PostgreSQL: Baixando...` })
+                    updateProgress({ ...p, app: 'postgresql', message: p.message || `PostgreSQL: ${p.status}...` })
                 );
             }
 
@@ -419,7 +491,7 @@ class TanamaoFoodController {
                 info(PROGRAM_ID, 'PostGIS não encontrado. Instalando dependência...');
                 updateProgress({ status: 'info', message: 'Instalando PostGIS (dependência)...' });
                 await postgisController.install((p) =>
-                    updateProgress({ ...p, app: 'postgis', message: `PostGIS: Baixando...` })
+                    updateProgress({ ...p, app: 'postgis', message: p.message || `PostGIS: ${p.status}...` })
                 );
             }
 
@@ -438,7 +510,7 @@ class TanamaoFoodController {
             updateProgress({ status: 'checking', message: 'Buscando versão mais recente...' });
             let latestId;
             try {
-                latestId = await getLatestPackageId();
+                latestId = await this.getLatestPackageId();
             } catch (err) {
                 throw new Error(`Erro ao consultar servidor de pacotes: ${err.message}`);
             }
@@ -462,7 +534,9 @@ class TanamaoFoodController {
             updateProgress({ status: 'extracting', message: 'Extraindo pacote...' });
             let exePath, sqlFiles;
             try {
-                ({ exePath, sqlFiles } = extractPackage(zipPath));
+                ({ exePath, sqlFiles } = extractPackage(zipPath, (p) => {
+                    updateProgress({ status: 'extracting', ...p });
+                }));
             } finally {
                 // Sempre remove o ZIP, mesmo em caso de erro
                 if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
@@ -483,7 +557,16 @@ class TanamaoFoodController {
                     windowsVerbatimArguments: true,
                 });
 
+                // Simula progresso da instalação visto que o instalador é silencioso (/S)
+                let simulatedPercent = 0;
+                const interval = setInterval(() => {
+                    simulatedPercent += (100 - simulatedPercent) * 0.1; // cresce de forma assintótica
+                    if (simulatedPercent > 95) simulatedPercent = 95;
+                    updateProgress({ status: 'installing', percentage: Math.round(simulatedPercent), message: `Instalando arquivos do app... ${Math.round(simulatedPercent)}%` });
+                }, 2000);
+
                 proc.on('close', (code) => {
+                    clearInterval(interval);
                     if (code === 0) {
                         info(PROGRAM_ID, 'Instalador concluído com sucesso.');
                         resolve();
@@ -493,6 +576,7 @@ class TanamaoFoodController {
                 });
 
                 proc.on('error', (err) => {
+                    clearInterval(interval);
                     reject(new Error(`Falha ao iniciar o instalador: ${err.message}`));
                 });
             });
@@ -524,12 +608,14 @@ class TanamaoFoodController {
                 const foodUserData = path.join(app.getPath('appData'), 'tanamao-food');
 
                 writeExternalConfig(foodUserData, {
-                    log_path: logPath,
-                    host: configs.host,
-                    port: configs.port,
-                    user: configs.user,
-                    password: configs.password,
-                    database: configs.database
+                    db: {
+                        log_path: logPath,
+                        host: configs.host,
+                        port: configs.port,
+                        user: configs.user,
+                        password: configs.password,
+                        database: configs.database
+                    }
                 });
             } catch (logErr) {
                 warn(PROGRAM_ID, `Não foi possível sincronizar configurações: ${logErr.message}`);
@@ -584,12 +670,16 @@ class TanamaoFoodController {
 
             updateProgress({ status: 'completed', percentage: 100, message: 'Instalação concluída!' });
             info(PROGRAM_ID, '──── Instalação do Tanamao Food concluída ────');
+            notify('Tanamao Hub', 'Instalação do Tanamao Food concluída com sucesso!');
             return { success: true, setupDone: true };
 
         } catch (e) {
             logError(PROGRAM_ID, `Erro no processo de instalação: ${e.message}`);
             updateProgress({ status: 'error', error: e.message });
             return { success: false, error: e.message };
+        } finally {
+            this.isBusy = false;
+            this.currentBusyStatus = null;
         }
     }
 
@@ -612,19 +702,36 @@ class TanamaoFoodController {
      * @param {Function} [progressCallback] - Callback de progresso
      */
     async updateFood(progressCallback) {
+        if (this.isBusy) {
+            throw new Error('Uma operação já está em andamento para o Tanamao Food.');
+        }
+
+        this.isBusy = true;
+        this.currentBusyStatus = 'updating';
+
         const cb = (data) => { if (progressCallback) progressCallback(data); };
+
+        let currentStep = 0;
+        let totalSteps = 6; // Checking, Terminating, Downloading, Extracting, Installing, Migrating
+
+        /** Helper para injetar o prefixo de passos na mensagem */
+        const updateProgress = (data) => {
+            const stepPrefix = totalSteps > 1 ? `[${currentStep}/${totalSteps}] ` : '';
+            const message = data.message ? `${stepPrefix}${data.message}` : data.message;
+            cb({ ...data, message });
+        };
 
         try {
             info(PROGRAM_ID, '──── Verificando atualização do Tanamao Food ────');
 
-            // ── Passo 1 & 2: Comparar versões ─────────────────────────────────
-
+            // ── Passo 1: Comparar versões ─────────────────────────────────
+            currentStep++;
             const currentId = this.getInstalledPackageId();
-            cb({ status: 'checking', message: 'Verificando versão disponível...' });
+            updateProgress({ status: 'checking', message: 'Verificando versão disponível...' });
 
             let latestId;
             try {
-                latestId = await getLatestPackageId();
+                latestId = await this.getLatestPackageId();
             } catch (err) {
                 throw new Error(`Erro ao consultar servidor de pacotes: ${err.message}`);
             }
@@ -636,45 +743,39 @@ class TanamaoFoodController {
 
             info(PROGRAM_ID, `Nova versão disponível: ${currentId} → ${latestId}. Iniciando atualização...`);
 
-            // ── Passo 3: Encerrar processo se estiver rodando ──────────────────
+            // ── Passo 2: Encerrar processo se estiver rodando ──────────────────
+            currentStep++;
+            updateProgress({ status: 'info', message: 'Encerrando o aplicativo para atualizar...' });
+            await this.terminateFoodProcess();
 
-            if (this.isFoodRunning()) {
-                info(PROGRAM_ID, 'Encerrando processo do Tanamao Food para atualizar...');
-                cb({ status: 'info', message: 'Encerrando o aplicativo para atualizar...' });
-                try {
-                    execSync(`taskkill /F /IM "${path.basename(this.getInstallPath())}"`);
-                } catch (e) {
-                    warn(PROGRAM_ID, `Falha ao encerrar processo (pode já estar fechado): ${e.message}`);
-                }
-            }
-
-            // ── Passo 4: Baixar pacote delta ───────────────────────────────────
-            // fromId = versão instalada → toId = mais recente (o servidor entrega apenas o diff)
-
+            // ── Passo 3: Baixar pacote delta ───────────────────────────────────
+            currentStep++;
             const zipPath = path.join(getWritablePath(), `tanamao-food-${currentId}-${latestId}.zip`);
-            cb({ status: 'downloading', message: `Baixando atualização (${currentId} → ${latestId})...` });
+            updateProgress({ status: 'downloading', message: `Baixando atualização (${currentId} → ${latestId})...` });
 
             try {
                 await downloadPackage(currentId, latestId, zipPath, ({ percentage }) => {
-                    cb({ status: 'downloading', percentage, message: `Baixando... ${percentage}%` });
+                    updateProgress({ status: 'downloading', percentage, message: `Baixando... ${percentage}%` });
                 });
             } catch (err) {
                 throw new Error(`Erro ao baixar pacote de atualização: ${err.message}`);
             }
 
-            // ── Passo 5: Extrair ───────────────────────────────────────────────
-
-            cb({ status: 'extracting', message: 'Extraindo atualização...' });
+            // ── Passo 4: Extrair ───────────────────────────────────────────────
+            currentStep++;
+            updateProgress({ status: 'extracting', message: 'Extraindo atualização...' });
             let exePath, sqlFiles;
             try {
-                ({ exePath, sqlFiles } = extractPackage(zipPath));
+                ({ exePath, sqlFiles } = extractPackage(zipPath, (p) => {
+                    updateProgress({ status: 'extracting', ...p });
+                }));
             } finally {
                 if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
             }
 
-            // ── Passo 6: Executar instalador ───────────────────────────────────
-
-            cb({ status: 'installing', percentage: 0, message: 'Instalando atualização...' });
+            // ── Passo 5: Executar instalador ───────────────────────────────────
+            currentStep++;
+            updateProgress({ status: 'installing', percentage: 0, message: 'Instalando atualização...' });
             info(PROGRAM_ID, `Executando instalador de atualização: "${exePath}"`);
 
             await new Promise((resolve, reject) => {
@@ -683,22 +784,32 @@ class TanamaoFoodController {
                     windowsVerbatimArguments: true,
                 });
 
+                // Simula progresso da atualização
+                let simulatedPercent = 0;
+                const interval = setInterval(() => {
+                    simulatedPercent += (100 - simulatedPercent) * 0.1;
+                    if (simulatedPercent > 95) simulatedPercent = 95;
+                    updateProgress({ status: 'installing', percentage: Math.round(simulatedPercent), message: `Aplicando atualização... ${Math.round(simulatedPercent)}%` });
+                }, 2000);
+
                 proc.on('close', (code) => {
+                    clearInterval(interval);
                     if (code === 0) resolve();
                     else reject(new Error(`Instalador finalizado com código de erro: ${code}`));
                 });
 
                 proc.on('error', (err) => {
+                    clearInterval(interval);
                     reject(new Error(`Falha ao iniciar o instalador: ${err.message}`));
                 });
             });
 
             if (fs.existsSync(exePath)) fs.unlinkSync(exePath);
 
-            // ── Passo 7: Rodar novas migrations ───────────────────────────────
-
-            if (sqlFiles.length > 0) {
-                cb({ status: 'info', message: `Aplicando ${sqlFiles.length} migration(s) nova(s)...` });
+            // ── Passo 6: Rodar novas migrations ───────────────────────────────
+            currentStep++;
+            if (sqlFiles && sqlFiles.length > 0) {
+                updateProgress({ status: 'info', message: `Aplicando ${sqlFiles.length} migration(s) nova(s)...` });
                 try {
                     const configs = getConfigs();
                     await setupDatabase(
@@ -706,7 +817,7 @@ class TanamaoFoodController {
                         configs.user,
                         configs.password,
                         sqlFiles.sort(), // garante ordem de execução
-                        (p) => cb({ ...p, message: `Banco: ${p.status}...` }),
+                        (p) => updateProgress({ ...p, message: `Banco: ${p.status}...` }),
                         null,
                         'tanamao-food'
                     );
@@ -714,21 +825,27 @@ class TanamaoFoodController {
                 } catch (dbErr) {
                     logError(PROGRAM_ID, `Erro ao aplicar migrations: ${dbErr.message}`);
                 }
+            } else {
+                updateProgress({ status: 'info', message: 'Nenhuma migration nova encontrada.' });
             }
 
-            // ── Passo 8: Salvar nova versão instalada ──────────────────────────
+            // ── Finalização: Salvar nova versão instalada ──────────────────────────
 
             saveConfigs({ installed_package_id: latestId });
             info(PROGRAM_ID, `Versão instalada atualizada para ID ${latestId}.`);
 
-            cb({ status: 'completed', percentage: 100, message: 'Atualização concluída!' });
+            updateProgress({ status: 'completed', percentage: 100, message: 'Atualização concluída!' });
             info(PROGRAM_ID, '──── Atualização do Tanamao Food concluída ────');
+            notify('Tanamao Hub', `Atualização para a versão ${latestId} concluída com sucesso!`);
             return { success: true };
 
         } catch (e) {
             logError(PROGRAM_ID, `Erro durante atualização: ${e.message}`);
             cb({ status: 'error', error: e.message });
             return { success: false, error: e.message };
+        } finally {
+            this.isBusy = false;
+            this.currentBusyStatus = null;
         }
     }
 
@@ -741,20 +858,21 @@ class TanamaoFoodController {
      * @param {Function} [progressCallback]
      */
     async uninstallFood(progressCallback) {
+        if (this.isBusy) {
+            throw new Error('Uma operação já está em andamento para o Tanamao Food.');
+        }
+
+        this.isBusy = true;
+        this.currentBusyStatus = 'uninstalling';
+
         const cb = (data) => { if (progressCallback) progressCallback(data); };
 
         try {
             info(PROGRAM_ID, '──── Iniciando desinstalação do Tanamao Food ────');
 
             // Encerra o processo se estiver rodando
-            if (this.isFoodRunning()) {
-                info(PROGRAM_ID, 'Encerrando processo antes de desinstalar...');
-                try {
-                    execSync(`taskkill /F /IM "${path.basename(this.getInstallPath())}"`);
-                } catch (e) {
-                    warn(PROGRAM_ID, `Falha ao encerrar processo: ${e.message}`);
-                }
-            }
+            cb({ status: 'info', message: 'Encerrando o aplicativo...' });
+            await this.terminateFoodProcess();
 
             const installDir = path.dirname(this.getInstallPath());
             if (!fs.existsSync(installDir)) {
@@ -779,7 +897,7 @@ class TanamaoFoodController {
             info(PROGRAM_ID, `Executando desinstalador: ${uninstallerPath}`);
             cb({ status: 'uninstalling', percentage: 50, message: 'Executando desinstalador...' });
 
-            return new Promise((resolve, reject) => {
+            await new Promise((resolve, reject) => {
                 const proc = spawn(`"${uninstallerPath}"`, ['/S'], {
                     shell: true,
                     windowsVerbatimArguments: true,
@@ -805,10 +923,15 @@ class TanamaoFoodController {
                 });
             });
 
+            return { success: true };
+
         } catch (e) {
             logError(PROGRAM_ID, `Erro no processo de desinstalação: ${e.message}`);
             cb({ status: 'error', error: e.message });
             return { success: false, error: e.message };
+        } finally {
+            this.isBusy = false;
+            this.currentBusyStatus = null;
         }
     }
 }

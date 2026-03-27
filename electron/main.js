@@ -6,6 +6,7 @@ import initIPCApi from './src/api/index.js'
 import BackupService from './src/services/backup.service.js';
 import UpdateService from './src/services/update.service.js';
 import { initHubServer } from './src/api/server.js';
+import { notify } from './src/utils/notify.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -66,6 +67,7 @@ function createWindow() {
     win.on('close', (e) => {
         if (!isQuitting) {
             e.preventDefault();
+            notify('Tanamao Hub', 'Tanamao Hub está rodando em segundo plano.');
             win.hide();
         }
     });
@@ -73,10 +75,10 @@ function createWindow() {
 
 app.whenReady().then(async () => {
     await initIPCApi();
-    BackupService.start();
-    UpdateService.start();
     hubServer = initHubServer();
     createWindow();
+    BackupService.start();
+    UpdateService.start();
 });
 
 app.on('window-all-closed', () => {

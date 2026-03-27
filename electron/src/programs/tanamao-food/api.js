@@ -40,6 +40,7 @@ export default function initTanamaoFoodApi() {
             info('tanamao-food-api', 'Iniciando IPC: tanamao-food:install');
             const result = await TanamaoFoodController.installFood((progress) => {
                 event.sender.send('tanamao-food:progress', progress);
+                event.sender.send('program:progress', 'tanamao-food', progress);
             }, installDir);
             info('tanamao-food-api', `Finalizado IPC: tanamao-food:install com sucesso=${result?.success}`);
             return result;
@@ -53,6 +54,7 @@ export default function initTanamaoFoodApi() {
         try {
             const result = await TanamaoFoodController.updateFood((progress) => {
                 event.sender.send('tanamao-food:progress', progress);
+                event.sender.send('program:progress', 'tanamao-food', progress);
             }, installDir);
             return result;
         } catch (error) {
@@ -62,6 +64,9 @@ export default function initTanamaoFoodApi() {
 
     ipcMain.handle('tanamao-food:version', async () => {
         try {
+            if (TanamaoFoodController.isBusy) {
+                return { success: true, version: '...' };
+            }
             const version = TanamaoFoodController.getFoodVersion();
             return { success: true, version };
         } catch (error) {
@@ -72,6 +77,12 @@ export default function initTanamaoFoodApi() {
     ipcMain.handle('tanamao-food:setup-database', async (event) => {
         try {
             info('tanamao-food-api', 'Iniciando IPC: tanamao-food:setup-database');
+
+            if (TanamaoFoodController.isBusy) {
+                const msg = 'Uma operação (instalação/atualização) já está em andamento.';
+                return { success: false, error: msg };
+            }
+
             // Medida extra de segurança: não configurar banco se o app não estiver instalado
             if (!TanamaoFoodController.isFoodInstalled()) {
                 const msg = 'Tentativa de configurar banco, mas o Tanamao Food não está instalado. Abortando.';
@@ -92,6 +103,7 @@ export default function initTanamaoFoodApi() {
             // Usa o setupDatabase do diretório programs que é o mais completo
             await setupDatabase(configs.database, configs.user, configs.password, migrationFiles, (progress) => {
                 event.sender.send('tanamao-food:config:progress', progress);
+                event.sender.send('program:config:progress', 'tanamao-food', progress);
             });
 
             // O nome da pasta de userData para o Tanamao Food é 'tanamao-food' (conforme seu package.json)
@@ -124,6 +136,7 @@ export default function initTanamaoFoodApi() {
             info('tanamao-food-api', 'Iniciando IPC: tanamao-food:uninstall');
             const result = await TanamaoFoodController.uninstallFood((progress) => {
                 event.sender.send('tanamao-food:progress', progress);
+                event.sender.send('program:progress', 'tanamao-food', progress);
             });
             return result;
         } catch (err) {

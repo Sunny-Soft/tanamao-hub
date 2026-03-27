@@ -7,23 +7,7 @@ export class TanamaoFoodHandler extends BaseHandler {
     readonly programId = 'tanamao-food';
 
     override init(onProgress: (id: string, status: Program['status'], progress?: number, message?: string) => void): void {
-        if (window.api?.onTanamaoFoodProgress) {
-            window.api.onTanamaoFoodProgress((progress) => {
-                if (progress.status === 'installing') {
-                    onProgress(this.programId, 'installing', progress.percentage, (progress as any).message);
-                } else if (progress.status !== 'completed' && !progress.error) {
-                    onProgress(this.programId, 'downloading', progress.percentage, (progress as any).message);
-                }
-            });
-        }
-
-        if (window.api?.onTanamaoFoodConfigProgress) {
-            window.api.onTanamaoFoodConfigProgress((progress) => {
-                if (progress.status === 'migrating') {
-                    onProgress(this.programId, 'installing', progress.percentage, `Configurando banco: ${(progress as any).file || '...'}`);
-                }
-            });
-        }
+        super.init(onProgress);
     }
 
     override async install(): Promise<{ success: boolean; error?: string }> {

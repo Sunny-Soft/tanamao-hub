@@ -16,6 +16,10 @@ const { Pool } = pkg;
 const PROGRAM_ID = 'postgres';
 
 class PostgresController {
+    constructor() {
+        this.isBusy = false;
+        this.currentBusyStatus = null;
+    }
 
     // ─── Detecção ─────────────────────────────────────────────────────────────
 
@@ -168,6 +172,14 @@ class PostgresController {
     }
 
     getStatus() {
+        if (this.isBusy) {
+            return {
+                status: this.currentBusyStatus || 'busy',
+                isRunning: false,
+                version: '...',
+            };
+        }
+
         return {
             status: this.isInstalled() ? 'installed' : 'not-installed',
             isRunning: this.isRunning(),
@@ -176,11 +188,35 @@ class PostgresController {
     }
 
     async install(progressCallback) {
-        return this.downloadAndInstall(progressCallback);
+        if (this.isBusy) {
+            throw new Error('Uma operação já está em andamento para o PostgreSQL.');
+        }
+
+        this.isBusy = true;
+        this.currentBusyStatus = 'installing';
+
+        try {
+            return await this.downloadAndInstall(progressCallback);
+        } finally {
+            this.isBusy = false;
+            this.currentBusyStatus = null;
+        }
     }
 
     async uninstall(progressCallback) {
-        return this.uninstallPostgres(progressCallback);
+        if (this.isBusy) {
+            throw new Error('Uma operação já está em andamento para o PostgreSQL.');
+        }
+
+        this.isBusy = true;
+        this.currentBusyStatus = 'uninstalling';
+
+        try {
+            return await this.uninstallPostgres(progressCallback);
+        } finally {
+            this.isBusy = false;
+            this.currentBusyStatus = null;
+        }
     }
 
     async start() {
@@ -328,9 +364,15 @@ class PostgresController {
 
         response.data.on('data', (chunk) => {
             downloadedLength += chunk.length;
-            if (totalLength && progressCallback) {
-                const percentage = Math.round((downloadedLength / totalLength) * 100);
-                progressCallback({ status: 'downloading', percentage });
+            if (progressCallback) {
+                if (totalLength) {
+                    const percentage = Math.round((downloadedLength / totalLength) * 100);
+                    progressCallback({ status: 'downloading', percentage, message: `Baixando... ${percentage}%` });
+                } else {
+                    // Se não temos o total, apenas reportamos que está baixando (sem porcentagem)
+                    const downloadedMB = (downloadedLength / (1024 * 1024)).toFixed(2);
+                    progressCallback({ status: 'downloading', message: `Baixando... (${downloadedMB} MB)` });
+                }
             }
         });
 

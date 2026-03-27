@@ -39,6 +39,11 @@ declare global {
             logsWatch: (programId: string) => Promise<void>
             logsUnwatch: () => Promise<void>
             onLogsUpdate: (callback: (data: { programId: string; content: string }) => void) => void
+
+            onUpdateAvailable: (callback: (programId: string, data: { current: string; latest: string }) => void) => void
+
+            onProgramProgress: (callback: (programId: string, progress: { status: string; percentage?: number; error?: string; message?: string }) => void) => void
+            onProgramConfigProgress: (callback: (programId: string, progress: { status: string; percentage?: number; error?: string; message?: string; file?: string }) => void) => void
         }
     }
 }

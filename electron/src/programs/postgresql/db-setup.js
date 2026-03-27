@@ -84,6 +84,7 @@ export async function setupDatabase(dbName = 'dados', user = 'postgres', passwor
                 if (templatePath && fs.existsSync(templatePath)) {
                     info(PROGRAM_ID, `Usando template de backup: ${templatePath}`);
                     if (callback) callback({ status: 'restoring_template', percentage: 5 });
+
                     await PostgresController.restoreBinaryBackup(dbName, templatePath, user, password);
                 }
             } else {

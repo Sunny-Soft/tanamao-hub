@@ -9,7 +9,7 @@ export default function initPostgresApi() {
     ipcMain.handle('postgres:install', async (event) => {
         try {
             await PostgresController.downloadAndInstall((progress) => {
-                event.sender.send('postgres:progress', progress);
+                event.sender.send('program:progress', 'postgresql', progress);
             });
             return { success: true };
         } catch (error) {
@@ -21,6 +21,7 @@ export default function initPostgresApi() {
         try {
             await PostgresController.uninstallPostgres((progress) => {
                 event.sender.send('postgres:progress', progress);
+                event.sender.send('program:progress', 'postgresql', progress);
             });
             return { success: true };
         } catch (error) {
@@ -96,6 +97,7 @@ export default function initPostgresApi() {
                 migrationFiles,
                 (progress) => {
                     event.sender.send('postgres:config:progress', progress);
+                    event.sender.send('program:config:progress', 'postgresql', progress);
                 },
                 null, // templatePath
                 'system' // systemId

@@ -15,10 +15,14 @@ export class DataService {
   ) {
     // Inicializa todos os handlers — cada um registra seus próprios listeners de progresso
     for (const handler of this.registry.handlers) {
-      handler.init((id, status, progress, message) => {
+      handler.init((id: string, status: Program['status'], progress?: number, message?: string) => {
         this.updateProgramStatus(id, status, progress, message);
       });
     }
+
+    window.api.onUpdateAvailable((programId, data) => {
+      this.updateProgramStatus(programId, 'installed', undefined, undefined, undefined, true);
+    });
 
     this.loadPrograms();
   }
@@ -29,7 +33,7 @@ export class DataService {
     try {
       const programs = await window.api.getPrograms();
       this._programs.set(programs);
-      await this.checkStatuses();
+      // checkStatuses() era redundante aqui pois getPrograms() já traz o status completo
     } catch (error) {
       console.error('[DataService] Falha ao carregar programas:', error);
     }
@@ -40,20 +44,15 @@ export class DataService {
   }
 
   /**
-   * Atualiza o status de cada programa consultando seu handler.
-   * Nenhum conhecimento específico de programa aqui.
+   * Atualiza o status de todos os programas com uma única chamada ao backend.
    */
   async checkStatuses() {
-    let currentPrograms = [...this._programs()];
-    for (const handler of this.registry.handlers) {
-      const dynamicStatus = await handler.checkStatus();
-      currentPrograms = currentPrograms.map(p =>
-        p.id === handler.programId
-          ? { ...p, ...dynamicStatus }
-          : p
-      );
+    try {
+      const programs = await window.api.getPrograms();
+      this._programs.set(programs);
+    } catch (error) {
+      console.error('[DataService] Erro ao atualizar status:', error);
     }
-    this._programs.set(currentPrograms);
   }
 
   // ─── Ações genéricas ──────────────────────────────────────────────────────
@@ -81,23 +80,28 @@ export class DataService {
       const program = this._programs().find(p => p.id === id);
 
       // Instala dependências primeiro
-      if (program?.dependencies?.length) {
-        for (const depId of program.dependencies) {
-          const depHandler = this.registry.getHandler(depId);
-          if (!depHandler) continue;
+      // if (program?.dependencies?.length) {
+      //   for (const depId of program.dependencies) {
+      //     const depHandler = this.registry.getHandler(depId);
+      //     if (!depHandler) continue;
 
-          const depStatus = await depHandler.checkStatus();
-          if (depStatus.status !== 'installed') {
-            this.updateProgramStatus(id, 'downloading', 0, `Instalando dependência: ${depId}...`);
-            const depResult = await depHandler.install();
-            if (!depResult.success) {
-              console.error(`[DataService] Falha ao instalar dependência ${depId}:`, depResult.error);
-              this.updateProgramStatus(id, 'not-installed');
-              return;
-            }
-          }
-        }
-      }
+      //     const depStatus = await depHandler.checkStatus();
+      //     if (depStatus.status !== 'installed') {
+      //       // Se o depId for postgresql ou postgis e o programa for tanamao-food,
+      //       // o próprio controller do tanamao-food já vai lidar com isso.
+      //       // Mas para garantir visibilidade no card da dependência, mantemos a chamada.
+      //       // IMPORTANTE: Atualizamos o status do programa PAI também.
+      //       this.updateProgramStatus(id, 'downloading', 0, `Instalando dependência: ${depId}...`);
+            
+      //       const depResult = await depHandler.install();
+      //       if (!depResult.success) {
+      //         console.error(`[DataService] Falha ao instalar dependência ${depId}:`, depResult.error);
+      //         this.updateProgramStatus(id, 'error', undefined, `Falha na dependência: ${depId}`);
+      //         return;
+      //       }
+      //     }
+      //   }
+      // }
 
       // Instala o programa principal
       const handler = this.registry.getHandler(id);
@@ -173,10 +177,10 @@ export class DataService {
         this.updateProgramStatus(id, 'installed');
         await this.checkStatuses();
       } else {
-        this.updateProgramStatus(id, 'installed');
+        this.updateProgramStatus(id, 'not-installed');
       }
     } catch (error) {
-      this.updateProgramStatus(id, 'installed');
+      this.updateProgramStatus(id, 'not-installed');
     }
   }
 
@@ -230,17 +234,18 @@ export class DataService {
 
   // ─── Estado ───────────────────────────────────────────────────────────────
 
-  updateProgramStatus(id: string, status: Program['status'], progress?: number, message?: string, isRunning?: boolean) {
+  updateProgramStatus(id: string, status: Program['status'], progress?: number, message?: string, isRunning?: boolean, hasUpdate?: boolean) {
     const currentList = this._programs();
     if (!currentList.find(p => p.id === id)) return;
 
     const updatedList = currentList.map(p =>
-      p.id === id ? { 
-        ...p, 
-        status, 
-        progress, 
-        message, 
-        isRunning: isRunning !== undefined ? isRunning : p.isRunning 
+      p.id === id ? {
+        ...p,
+        status,
+        progress,
+        message,
+        isRunning: isRunning !== undefined ? isRunning : p.isRunning,
+        hasUpdate: hasUpdate !== undefined ? hasUpdate : p.hasUpdate
       } : p
     );
     this._programs.set(updatedList);
@@ -263,4 +268,6 @@ export class DataService {
     }
     return { success: false, error: 'Funcionalidade não suportada para este programa.' };
   }
+
+
 }

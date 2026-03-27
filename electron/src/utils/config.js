@@ -29,12 +29,21 @@ export function getWritablePath() {
 }
 
 export function getConfigPath() {
-    const configPath = app.isPackaged
+    return app.isPackaged
         ? path.join(app.getPath('userData'), 'configs.json')
         : path.join(rootPath(), 'configs.json');
+}
 
+export function getMigrationsPath() {
+    return path.join(getWritablePath(), 'migrations');
+}
+
+export function getConfigs() {
+    const configPath = getConfigPath();
+    
+    // Se o arquivo não existir, criamos com os valores default
     if (!fs.existsSync(configPath)) {
-        fs.writeFileSync(configPath, JSON.stringify({
+        const defaults = {
             host: 'localhost',
             port: 5433,
             user: 'postgres',
@@ -47,25 +56,37 @@ export function getConfigPath() {
             backup_time: '03:00',
             backup_days: [1, 2, 3, 4, 5], // segunda a sexta
             backup_path: path.join(getWritablePath(), 'backups')
-        }));
+        };
+        fs.writeFileSync(configPath, JSON.stringify(defaults, null, 2));
+        return defaults;
     }
 
-    return configPath
-}
-
-export function getMigrationsPath() {
-    return path.join(getWritablePath(), 'migrations');
-}
-
-export function getConfigs() {
-    const configPath = getConfigPath();
-    if (!fs.existsSync(configPath)) {
-        return {};
-    }
     try {
-        return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        const content = fs.readFileSync(configPath, 'utf-8');
+        let configs = JSON.parse(content);
+        let changed = false;
+
+        // Migração/Validação de campos obrigatórios
+        if (!configs.backup_path) {
+            configs.backup_path = path.join(getWritablePath(), 'backups');
+            changed = true;
+        }
+        if (configs.auto_update === undefined) {
+            configs.auto_update = true;
+            changed = true;
+        }
+        if (!configs.port || configs.port == 5432) {
+            configs.port = 5433;
+            changed = true;
+        }
+
+        if (changed) {
+            fs.writeFileSync(configPath, JSON.stringify(configs, null, 2));
+        }
+
+        return configs;
     } catch (err) {
-        console.error("Error reading configs.json:", err);
+        console.error("Error reading/parsing configs.json:", err);
         return {};
     }
 }

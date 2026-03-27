@@ -55,6 +55,17 @@ export default async function initIPCApi() {
             throw new Error(`Ação "${action}" não suportada pelo programa ${programId}.`);
         }
 
+        // Se for uma ação que suporta reporte de progresso, injeta o callback
+        const progressActions = ['install', 'update', 'uninstall', 'setup'];
+        if (progressActions.includes(action)) {
+            const progressCallback = (data) => {
+                // Emite evento genérico e também o legado para compatibilidade
+                event.sender.send('program:progress', programId, data);
+                event.sender.send(`${programId}:progress`, data);
+            };
+            return await controller[action](progressCallback, ...args);
+        }
+
         return await controller[action](...args);
     });
 

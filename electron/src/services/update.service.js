@@ -18,6 +18,8 @@
 import { getConfigs } from '../utils/config.js';
 import TanamaoFoodController from '../programs/tanamao-food/controller.js';
 import { info, error as logError } from '../utils/logger.js';
+import { BrowserWindow } from 'electron';
+import { notify } from '../utils/notify.js';
 
 const PROGRAM_ID = 'update-service';
 
@@ -37,8 +39,8 @@ class UpdateService {
 
         info(PROGRAM_ID, 'Serviço de atualização automática iniciado (intervalo: 1h).');
 
-        // Verifica imediatamente ao iniciar
-        this.checkUpdates();
+        // Verifica após 5 segundos para garantir que a janela e o front estejam prontos
+        setTimeout(() => this.checkUpdates(), 5000);
 
         // Agenda verificações a cada 1 hora
         this.interval = setInterval(() => this.checkUpdates(), 60 * 60 * 1000);
@@ -73,10 +75,24 @@ class UpdateService {
 
         try {
             info(PROGRAM_ID, 'Verificando atualizações para o Tanamao Food...');
-            const result = await TanamaoFoodController.updateFood();
 
-            if (result.success && result.message !== 'Já atualizado.') {
-                info(PROGRAM_ID, 'Tanamao Food atualizado com sucesso pelo serviço automático.');
+            const latest = await TanamaoFoodController.getLatestPackageId();
+            const current = configs.installed_package_id;
+
+            if (latest > current) {
+                info(PROGRAM_ID, 'Atualização disponível...');
+
+                notify('Tanamao Hub', `Nova versão do Tanamao Food disponível (v${latest}).`);
+
+                const [win] = BrowserWindow.getAllWindows();
+                if (win) {
+                    win.webContents.send('update:available', 'tanamao-food', {
+                        current: current,
+                        latest: latest
+                    });
+                }
+            } else {
+                info(PROGRAM_ID, 'Tanamao Food já está atualizado.');
             }
         } catch (err) {
             logError(PROGRAM_ID, `Erro na verificação automática de atualizações: ${err.message}`);
