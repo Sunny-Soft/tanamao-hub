@@ -42,8 +42,11 @@ class UpdateService {
         // Verifica após 5 segundos para garantir que a janela e o front estejam prontos
         setTimeout(() => this.checkUpdates(), 5000);
 
-        // Agenda verificações a cada 1 hora
-        this.interval = setInterval(() => this.checkUpdates(), 60 * 60 * 1000);
+        // Segunda verificação aos 30 segundos (medida de robustez para redes lentas na inicialização)
+        setTimeout(() => this.checkUpdates(), 30000);
+
+        // Agenda verificações a cada 30 minutos
+        this.interval = setInterval(() => this.checkUpdates(), 30 * 60 * 1000);
     }
 
     /**
@@ -77,7 +80,7 @@ class UpdateService {
             info(PROGRAM_ID, 'Verificando atualizações para o Tanamao Food...');
 
             const latest = await TanamaoFoodController.getLatestPackageId();
-            const current = configs.installed_package_id;
+            const current = configs.tanamao_food?.installed_package_id || 0;
 
             if (latest > current) {
                 info(PROGRAM_ID, 'Atualização disponível...');

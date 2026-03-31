@@ -30,7 +30,9 @@ export class ConfigComponent implements OnInit {
     configForm = new FormGroup({
         auto_start: new FormControl<boolean>(false),
         auto_update: new FormControl<boolean>(false),
-        tanamao_food_path: new FormControl<string>(''),
+        tanamao_food: new FormGroup({
+            path: new FormControl<string>(''),
+        }),
         backup_enabled: new FormControl<boolean>(false),
         backup_time: new FormControl<string>('03:00'),
         backup_days: new FormControl<number[]>([]),
@@ -65,7 +67,9 @@ export class ConfigComponent implements OnInit {
                 this.configForm.patchValue({
                     auto_start: result.configs.auto_start || false,
                     auto_update: result.configs.auto_update || false,
-                    tanamao_food_path: result.configs.tanamao_food_path || 'C:\\Program Files\\Tanamao Food',
+                    tanamao_food: {
+                        path: result.configs.tanamao_food?.path || 'C:\\Sunny\\TanamaoFood'
+                    },
                     backup_enabled: result.configs.backup_enabled || false,
                     backup_time: result.configs.backup_time || '03:00',
                     backup_days: (result.configs.backup_days || [1, 2, 3, 4, 5]) as number[],

@@ -214,18 +214,42 @@ class TanamaoFoodController {
      * @returns {Promise<number>} ID numérico da versão mais recente. Ex: 331
      */
     async getLatestPackageId() {
-        const url = `${PACKAGES_API}/latest?id=${PACKAGE_ID}`;
-        info(PROGRAM_ID, `Buscando versão mais recente em: ${url}`);
+        const baseUrl = `${PACKAGES_API}/latest?id=${PACKAGE_ID}`;
+        const maxRetries = 3;
+        const retryDelay = 2000;
 
-        const response = await axios.get(url, { responseType: 'text' });
-        const id = parseInt(response.data.trim(), 10);
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                // Adiciona um timestamp para evitar cache do servidor/proxy
+                const url = `${baseUrl}&t=${Date.now()}`;
+                info(PROGRAM_ID, `Buscando versão mais recente (tentativa ${attempt}/${maxRetries}): ${url}`);
 
-        if (isNaN(id)) {
-            throw new Error(`Resposta inesperada ao buscar versão: "${response.data}"`);
+                const response = await axios.get(url, {
+                    responseType: 'text',
+                    timeout: 10000 // 10 segundos de timeout
+                });
+
+                const id = parseInt(response.data.trim(), 10);
+
+                if (isNaN(id)) {
+                    throw new Error(`Resposta inesperada ao buscar versão: "${response.data}"`);
+                }
+
+                info(PROGRAM_ID, `Versão mais recente disponível: ID ${id}`);
+                return id;
+            } catch (err) {
+                const isLastAttempt = attempt === maxRetries;
+                const msg = `Falha na tentativa ${attempt} ao buscar versão: ${err.message}`;
+
+                if (isLastAttempt) {
+                    logError(PROGRAM_ID, msg);
+                    throw new Error(`Erro ao consultar servidor de pacotes após ${maxRetries} tentativas: ${err.message}`);
+                } else {
+                    warn(PROGRAM_ID, `${msg}. Retentando em ${retryDelay / 1000}s...`);
+                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                }
+            }
         }
-
-        info(PROGRAM_ID, `Versão mais recente disponível: ID ${id}`);
-        return id;
     }
 
     /**
@@ -234,11 +258,14 @@ class TanamaoFoodController {
      */
     getInstallPath() {
         const configs = getConfigs();
-        if (configs && configs.tanamao_food_path) {
-            if (!configs.tanamao_food_path.toLowerCase().endsWith('.exe')) {
-                return path.join(configs.tanamao_food_path, 'Tanamao Food.exe');
+        const foodConfig = configs.tanamao_food || {};
+        const foodPath = foodConfig.path || 'C:\\Sunny\\TanamaoFood';
+
+        if (foodPath) {
+            if (!foodPath.toLowerCase().endsWith('.exe')) {
+                return path.join(foodPath, 'Tanamao Food.exe');
             }
-            return configs.tanamao_food_path;
+            return foodPath;
         }
         return path.join('C:', 'Sunny', 'TanamaoFood', 'Tanamao Food.exe');
     }
@@ -249,14 +276,14 @@ class TanamaoFoodController {
      */
     getInstalledPackageId() {
         const configs = getConfigs();
-        return configs.installed_package_id || 0;
+        return configs.tanamao_food?.installed_package_id || 0;
     }
 
     /**
-     * Verifica se o executável do Tanamao Food existe no caminho esperado.
+     * Verifica se o Tanamao Food está instalado e registrado (com ID > 0).
      */
     isFoodInstalled() {
-        return fs.existsSync(this.getInstallPath());
+        return this.getInstalledPackageId() > 0 && fs.existsSync(this.getInstallPath());
     }
 
     /**
@@ -280,12 +307,22 @@ class TanamaoFoodController {
     async terminateFoodProcess() {
         if (!this.isFoodRunning()) return true;
 
-        const exeName = path.basename(this.getInstallPath());
+        const exePath = this.getInstallPath();
+        const exeName = path.basename(exePath);
+        const installDir = path.dirname(exePath);
+
         info(PROGRAM_ID, `Solicitando encerramento do processo (e sua árvore): ${exeName}`);
 
         try {
             // /F = Forçar, /IM = ImageName, /T = Tree (mata processos filhos)
             execSync(`taskkill /F /IM "${exeName}" /T`, { stdio: 'ignore' });
+
+            // Medida extra: Se houver processos rodando a partir da pasta de instalação, tenta matar também
+            // Isso ajuda com processos "Helper" que podem ter nomes diferentes
+            if (app.isPackaged) {
+                // Em produção no Windows, podemos tentar um wmic ou similar, 
+                // mas o taskkill /IM já é razoavelmente bom.
+            }
         } catch (e) {
             // Pode falhar se o processo já tiver fechado
         }
@@ -306,32 +343,66 @@ class TanamaoFoodController {
     }
 
     /**
-     * Lê a versão do Tanamao Food a partir do package.json do app instalado.
-     * Suporta apps descompactados (resources/app) e compactados (resources/app.asar).
+     * Lê a versão do Tanamao Food a partir do arquivo executável ou package.json.
+     * 
+     * @param { boolean } [force = false] - Se true, ignora o estado isBusy e tenta ler o arquivo do disco.
      */
-    getFoodVersion() {
-        // Se estiver ocupado instalando/atualizando, não tenta ler arquivos para evitar locks
-        if (this.isBusy) return '...';
+    getFoodVersion(force = false) {
+        // Se estiver ocupado instalando/atualizando, retornamos a versão salva nas configs (Cache)
+        // a menos que seja solicitado forçar a leitura (útil no final de uma instalação/update)
+        if (this.isBusy && !force) {
+            const configs = getConfigs();
+            return configs.tanamao_food?.version || '...';
+        }
 
         try {
             const installPath = this.getInstallPath();
             if (!fs.existsSync(installPath)) return '0.0.0';
 
-            const resourceDir = path.join(path.dirname(installPath), 'resources');
+            let version = '0.0.0';
 
-            const candidatos = [
-                path.join(resourceDir, 'app', 'package.json'),
-                path.join(resourceDir, 'app.asar', 'package.json'),
-            ];
-
-            for (const pkgPath of candidatos) {
-                if (fs.existsSync(pkgPath)) {
-                    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-                    return pkg.version;
+            // No Windows, o jeito mais confiável é ler os metadados do executável
+            if (process.platform === 'win32') {
+                try {
+                    const versionOutput = execSync(`powershell "(Get-Item '${installPath}').VersionInfo.ProductVersion"`, { encoding: 'utf8' }).trim();
+                    if (versionOutput && versionOutput !== '0.0.0.0') {
+                        // Limpa versão de 4 dígitos para 3 (ex: 0.1.3.0 -> 0.1.3)
+                        version = versionOutput.split('.').slice(0, 3).join('.');
+                    }
+                } catch (err) {
+                    logError(PROGRAM_ID, `Erro ao ler versão via PowerShell: ${err.message}`);
                 }
             }
+
+            // Fallback para package.json (se descompactado) ou se o PowerShell falhar
+            if (version === '0.0.0') {
+                const resourceDir = path.join(path.dirname(installPath), 'resources');
+                const pkgPath = path.join(resourceDir, 'app', 'package.json');
+                if (fs.existsSync(pkgPath)) {
+                    try {
+                        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+                        version = pkg.version;
+                    } catch (e) {
+                        // Se der erro de JSON, ignoramos e version continua 0.0.0
+                    }
+                }
+            }
+
+            // Se a versão encontrada for diferente da salva nas configs, atualiza
+            const configs = getConfigs();
+            if (version !== '0.0.0' && version !== configs.tanamao_food?.version) {
+                saveConfigs({
+                    tanamao_food: {
+                        ...configs.tanamao_food,
+                        version: version
+                    }
+                });
+                info(PROGRAM_ID, `Versão do Tanamao Food atualizada nas configurações: ${version}`);
+            }
+
+            return version;
         } catch (e) {
-            logError(PROGRAM_ID, `Erro ao ler versão local: ${e.message}`);
+            logError(PROGRAM_ID, `Erro ao detectar versão: ${e.message}`);
         }
         return '0.0.0';
     }
@@ -586,11 +657,18 @@ class TanamaoFoodController {
 
             // ── Passo 6: Salvar versão instalada ──────────────────────────────
 
+            const configs = getConfigs();
+            const foodConfig = {
+                ...configs.tanamao_food,
+                installed_package_id: latestId,
+                version: this.getFoodVersion(true) // Força a leitura do disco pois a instalação acabou de terminar
+            };
+
             if (installDir) {
-                saveConfigs({ tanamao_food_path: installDir, installed_package_id: latestId });
-            } else {
-                saveConfigs({ installed_package_id: latestId });
+                foodConfig.path = installDir;
             }
+
+            saveConfigs({ tanamao_food: foodConfig });
             info(PROGRAM_ID, `Pacote instalado registrado: ID ${latestId}`);
 
             // Verifica se o executável realmente foi criado pelo instalador
@@ -624,49 +702,50 @@ class TanamaoFoodController {
             // ── Passo: Setup do banco de dados ──────────────────────────────
 
             updateProgress({ status: 'info', message: 'Configurando banco de dados...' });
-            try {
-                const configs = getConfigs();
-                const migrationsDir = getMigrationsPath();
+            // try {
+            //     const configs = getConfigs();
+            //     const migrationsDir = getMigrationsPath();
 
-                // Inclui as migrations recém-baixadas + quaisquer existentes, em ordem
-                const allSqlFiles = fs.existsSync(migrationsDir)
-                    ? fs.readdirSync(migrationsDir)
-                        .filter(f => f.endsWith('.sql'))
-                        .sort()
-                        .map(f => path.join(migrationsDir, f))
-                    : [];
+            //     // Inclui as migrations recém-baixadas + quaisquer existentes, em ordem
+            //     const allSqlFiles = fs.existsSync(migrationsDir)
+            //         ? fs.readdirSync(migrationsDir)
+            //             .filter(f => f.endsWith('.sql'))
+            //             .sort()
+            //             .map(f => path.join(migrationsDir, f))
+            //         : [];
 
-                info(PROGRAM_ID, `Executando ${allSqlFiles.length} migration(s) no banco "${configs.database}"...`);
+            //     info(PROGRAM_ID, `Executando ${allSqlFiles.length} migration(s) no banco "${configs.database}"...`);
 
-                // Busca por arquivo de template .backup em C:\Sunny\Tanamao Food\resources\db-template
-                let templatePath = null;
-                const templateDir = path.join(configs.tanamao_food_path, 'resources', 'db-template');
-                if (fs.existsSync(templateDir)) {
-                    const files = fs.readdirSync(templateDir);
-                    const backupFile = files.find(f => f.toLowerCase().endsWith('.backup'));
-                    if (backupFile) {
-                        templatePath = path.join(templateDir, backupFile);
-                        info(PROGRAM_ID, `Template de banco encontrado: ${templatePath}`);
-                    }
-                } else {
-                    warn(PROGRAM_ID, `Template de banco não encontrado em: ${templateDir}`);
-                }
+            //     // Busca por arquivo de template .backup em C:\Sunny\Tanamao Food\resources\db-template
+            //     let templatePath = null;
+            //     const foodPath = configs.tanamao_food?.path || 'C:\\Sunny\\TanamaoFood';
+            //     const templateDir = path.join(foodPath, 'resources', 'db-template');
+            //     if (fs.existsSync(templateDir)) {
+            //         const files = fs.readdirSync(templateDir);
+            //         const backupFile = files.find(f => f.toLowerCase().endsWith('.backup'));
+            //         if (backupFile) {
+            //             templatePath = path.join(templateDir, backupFile);
+            //             info(PROGRAM_ID, `Template de banco encontrado: ${templatePath}`);
+            //         }
+            //     } else {
+            //         warn(PROGRAM_ID, `Template de banco não encontrado em: ${templateDir}`);
+            //     }
 
-                await setupDatabase(
-                    configs.database,
-                    configs.user,
-                    configs.password,
-                    allSqlFiles,
-                    (p) => updateProgress({ ...p, message: `Banco: ${p.status}...` }),
-                    templatePath,
-                    'tanamao-food'
-                );
+            //     await setupDatabase(
+            //         configs.database,
+            //         configs.user,
+            //         configs.password,
+            //         allSqlFiles,
+            //         (p) => updateProgress({ ...p, message: `Banco: ${p.status}...` }),
+            //         templatePath,
+            //         'tanamao-food'
+            //     );
 
-                info(PROGRAM_ID, 'Setup do banco de dados concluído.');
-            } catch (dbErr) {
-                // Não cancela o retorno de sucesso — app está instalado, banco pode ser reconfigurado
-                logError(PROGRAM_ID, `Erro no setup do banco: ${dbErr.message}`);
-            }
+            //     info(PROGRAM_ID, 'Setup do banco de dados concluído.');
+            // } catch (dbErr) {
+            //     // Não cancela o retorno de sucesso — app está instalado, banco pode ser reconfigurado
+            //     logError(PROGRAM_ID, `Erro no setup do banco: ${dbErr.message}`);
+            // }
 
             updateProgress({ status: 'completed', percentage: 100, message: 'Instalação concluída!' });
             info(PROGRAM_ID, '──── Instalação do Tanamao Food concluída ────');
@@ -775,11 +854,43 @@ class TanamaoFoodController {
 
             // ── Passo 5: Executar instalador ───────────────────────────────────
             currentStep++;
-            updateProgress({ status: 'installing', percentage: 0, message: 'Instalando atualização...' });
-            info(PROGRAM_ID, `Executando instalador de atualização: "${exePath}"`);
+            updateProgress({ status: 'installing', percentage: 0, message: 'Preparando instalação limpa...' });
+
+            const currentInstallPath = this.getInstallPath();
+            const currentInstallDir = path.dirname(currentInstallPath);
+
+            // Força limpeza da pasta antiga para evitar "Falha ao desinstalar" do NSIS
+            if (fs.existsSync(currentInstallDir)) {
+                try {
+                    info(PROGRAM_ID, `Limpando pasta de instalação antiga para garantir atualização: ${currentInstallDir}`);
+
+                    // 1. Tenta remover a chave de registro de desinstalação (para o instalador não tentar rodar o uninstaller antigo)
+                    try {
+                        const regKey = 'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\f977ae57-a510-5550-a6bf-9ef823fbf7';
+                        execSync(`reg delete "${regKey}" /f`, { stdio: 'ignore' });
+                    } catch (e) { }
+
+                    // 2. Remove apenas o executável e o desinstalador para "quebrar" o vínculo do NSIS 
+                    // e forçar uma sobreescrita limpa sem disparar o desinstalador antigo bugado.
+                    const filesToCleanup = [
+                        'Tanamao Food.exe',
+                        'Uninstall Tanamao Food.exe',
+                        'Uninstall.exe'
+                    ];
+                    for (const f of filesToCleanup) {
+                        const p = path.join(currentInstallDir, f);
+                        if (fs.existsSync(p)) fs.unlinkSync(p);
+                    }
+                } catch (err) {
+                    warn(PROGRAM_ID, `Erro na limpeza pré-instalador (ignorado): ${err.message}`);
+                }
+            }
+
+            const installerArgs = ['/S', `/D=${currentInstallDir}`];
+            info(PROGRAM_ID, `Executando instalador de atualização: "${exePath}" ${installerArgs.join(' ')}`);
 
             await new Promise((resolve, reject) => {
-                const proc = spawn(`"${exePath}"`, ['/S'], {
+                const proc = spawn(`"${exePath}"`, installerArgs, {
                     shell: true,
                     windowsVerbatimArguments: true,
                 });
@@ -830,8 +941,14 @@ class TanamaoFoodController {
             }
 
             // ── Finalização: Salvar nova versão instalada ──────────────────────────
-
-            saveConfigs({ installed_package_id: latestId });
+            const configs = getConfigs();
+            saveConfigs({
+                tanamao_food: {
+                    ...configs.tanamao_food,
+                    installed_package_id: latestId,
+                    version: this.getFoodVersion(true) // Força a leitura do disco no final da atualização
+                }
+            });
             info(PROGRAM_ID, `Versão instalada atualizada para ID ${latestId}.`);
 
             updateProgress({ status: 'completed', percentage: 100, message: 'Atualização concluída!' });
@@ -889,7 +1006,15 @@ class TanamaoFoodController {
             if (!uninstallerName) {
                 warn(PROGRAM_ID, 'Desinstalador não encontrado. Removendo pasta manualmente...');
                 fs.rmSync(installDir, { recursive: true, force: true });
-                saveConfigs({ installed_package_id: 0 });
+
+                const configs = getConfigs();
+                saveConfigs({
+                    tanamao_food: {
+                        ...configs.tanamao_food,
+                        installed_package_id: 0,
+                        version: '0.0.0'
+                    }
+                });
                 return { success: true };
             }
 
@@ -906,8 +1031,15 @@ class TanamaoFoodController {
                 proc.on('close', (code) => {
                     if (code === 0 || code === null) {
                         info(PROGRAM_ID, 'Desinstalação concluída com sucesso.');
-                        // Zera o ID para que o auto-update não tente reinstalar
-                        saveConfigs({ installed_package_id: 0 });
+                        // Zera o ID e versão para que o auto-update não tente reinstalar
+                        const configs = getConfigs();
+                        saveConfigs({
+                            tanamao_food: {
+                                ...configs.tanamao_food,
+                                installed_package_id: 0,
+                                version: '0.0.0'
+                            }
+                        });
                         cb({ status: 'completed', percentage: 100 });
                         resolve({ success: true });
                     } else {

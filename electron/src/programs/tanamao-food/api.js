@@ -121,8 +121,9 @@ export default function initTanamaoFoodApi() {
             writeExternalConfig(foodConfigDir, dbConfig);
 
             // Também tenta atualizar na pasta de instalação se for diferente (para o modo dev do Food app)
-            if (configs.tanamao_food_path && fs.existsSync(configs.tanamao_food_path)) {
-                writeExternalConfig(configs.tanamao_food_path, dbConfig);
+            const foodPath = configs.tanamao_food?.path;
+            if (foodPath && fs.existsSync(foodPath)) {
+                writeExternalConfig(foodPath, dbConfig);
             }
 
             return { success: true };

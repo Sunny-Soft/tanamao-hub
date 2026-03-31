@@ -49,7 +49,11 @@ export function getConfigs() {
             user: 'postgres',
             password: 'admin',
             database: 'dados',
-            tanamao_food_path: 'C:\\Sunny\\TanamaoFood',
+            tanamao_food: {
+                path: 'C:\\Sunny\\TanamaoFood',
+                installed_package_id: 0,
+                version: '0.0.0'
+            },
             auto_start: true,
             auto_update: true,
             backup_enabled: false,
@@ -62,8 +66,28 @@ export function getConfigs() {
     }
 
     try {
-        const content = fs.readFileSync(configPath, 'utf-8');
-        let configs = JSON.parse(content);
+        let content = '';
+        let configs = null;
+        
+        // Tenta ler e parsear com uma pequena re-tentativa em caso de erro (ex: arquivo bloqueado)
+        for (let i = 0; i < 2; i++) {
+            try {
+                content = fs.readFileSync(configPath, 'utf-8');
+                if (content && content.trim()) {
+                    configs = JSON.parse(content);
+                    break;
+                }
+            } catch (e) {
+                if (i === 1) throw e;
+                // Em caso de erro na primeira tentativa, espera um ínfimo instante (busy wait)
+                // e tenta de novo. Útil para locks temporários no Windows.
+                const start = Date.now();
+                while (Date.now() - start < 50) { /* busy wait 50ms */ }
+            }
+        }
+
+        if (!configs) return {};
+        
         let changed = false;
 
         // Migração/Validação de campos obrigatórios
@@ -78,6 +102,30 @@ export function getConfigs() {
         if (!configs.port || configs.port == 5432) {
             configs.port = 5433;
             changed = true;
+        }
+
+        // Migração tanamao_food (campos flats para objeto)
+        if (!configs.tanamao_food) {
+            configs.tanamao_food = {
+                path: configs.tanamao_food_path || 'C:\\Sunny\\TanamaoFood',
+                installed_package_id: configs.installed_package_id || 0,
+                version: '0.0.0'
+            };
+            delete configs.tanamao_food_path;
+            delete configs.installed_package_id;
+            changed = true;
+        } else {
+            // Caso já exista o objeto mas campos legados ainda estejam lá
+            if (configs.tanamao_food_path) {
+                configs.tanamao_food.path = configs.tanamao_food_path;
+                delete configs.tanamao_food_path;
+                changed = true;
+            }
+            if (configs.installed_package_id) {
+                configs.tanamao_food.installed_package_id = configs.installed_package_id;
+                delete configs.installed_package_id;
+                changed = true;
+            }
         }
 
         if (changed) {
@@ -95,7 +143,17 @@ export function getConfigs() {
 export function saveConfigs(configs) {
     const configPath = getConfigPath();
     const oldConfigs = getConfigs();
+    
+    // Deep merge para o objeto tanamao_food para não perder campos como version ou installed_package_id
+    // se a UI mandar apenas o path ou vice-versa.
     const newConfigs = { ...oldConfigs, ...configs };
+    if (configs.tanamao_food && oldConfigs.tanamao_food) {
+        newConfigs.tanamao_food = {
+            ...oldConfigs.tanamao_food,
+            ...configs.tanamao_food
+        };
+    }
+
     fs.writeFileSync(configPath, JSON.stringify(newConfigs, null, 2));
 }
 

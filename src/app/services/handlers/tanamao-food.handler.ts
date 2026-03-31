@@ -13,7 +13,7 @@ export class TanamaoFoodHandler extends BaseHandler {
     override async install(): Promise<{ success: boolean; error?: string }> {
         try {
             const configResult = await window.api.configsGet();
-            const installPath = configResult.success ? configResult.configs?.tanamao_food_path : undefined;
+            const installPath = configResult.success ? configResult.configs?.tanamao_food?.path : undefined;
             return await window.api.programAction(this.programId, 'install', installPath);
         } catch (error: any) {
             return { success: false, error: error.message };
